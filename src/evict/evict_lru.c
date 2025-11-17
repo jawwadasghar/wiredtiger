@@ -1852,6 +1852,65 @@ __wt_evict_page_first_dirty(WT_SESSION_IMPL *session, WT_PAGE *page)
     }
 }
 
+/*
+ * __evict_skip_tree --
+ *     Decide if we should skip this tree
+ */
+static bool
+__evict_skip_tree(WT_SESSION_IMPL *session, WT_BTREE *btree)
+{
+    WT_EVICT *evict;
+    uint64_t btree_clean_inuse, btree_dirty_inuse, btree_updates_inuse;
+    bool want_tree;
+
+    evict = S2C(session)->evict;
+    btree_clean_inuse = btree_dirty_inuse = btree_updates_inuse = 0;
+
+    /* Skip files that don't allow eviction. */
+    if (btree->evict_data.evict_disabled > 0) {
+        WT_STAT_CONN_INCR(session, eviction_skip_trees_eviction_disabled);
+        return true;
+    }
+    /*
+     * Skip files that are checkpointing if we are only looking for dirty pages.
+     */
+    if (WT_BTREE_SYNCING(btree) &&
+        !F_ISSET(evict, WT_EVICT_CACHE_CLEAN | WT_EVICT_CACHE_UPDATES)) {
+        WT_STAT_CONN_INCR(session, eviction_skip_checkpointing_trees);
+        return true;
+    }
+
+    /*
+     * Skip files that are configured to stick in cache until we become aggressive.
+     *
+     * If the file is contributing heavily to our cache usage then ignore the "stickiness" of
+     * its pages.
+     */
+    if (btree->evict_data.evict_priority != 0 && !__wt_evict_aggressive(session) &&
+        !__evict_btree_dominating_cache(session, btree)) {
+        WT_STAT_CONN_INCR(session, eviction_skip_trees_stick_in_cache);
+        return true;
+    }
+
+    if (F_ISSET(evict, WT_EVICT_CACHE_CLEAN))
+        btree_clean_inuse = __wt_btree_bytes_evictable(session);
+
+    if (F_ISSET(evict, WT_EVICT_CACHE_DIRTY))
+        btree_dirty_inuse = __wt_btree_dirty_leaf_inuse(session);
+
+    if (F_ISSET(evict, WT_EVICT_CACHE_UPDATES))
+        btree_updates_inuse = __wt_btree_bytes_updates(session);
+
+    want_tree = (F_ISSET(evict, WT_EVICT_CACHE_CLEAN) && (btree_clean_inuse > 0)) ||
+      (F_ISSET(evict, WT_EVICT_CACHE_DIRTY) && (btree_dirty_inuse > 0)) ||
+      (F_ISSET(evict, WT_EVICT_CACHE_UPDATES) && (btree_updates_inuse > 0));
+
+//    if (!want_tree)
+//        WT_STAT_CONN_INCR(session, eviction_skip_unwanted_trees);
+
+    return (!want_tree);
+}
+
 
 /*
  * __evict_skip_page --
@@ -1864,7 +1923,7 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
     WT_CONNECTION_IMPL *conn;
     WT_EVICT *evict;
     WT_PAGE *page;
-    bool modified; //, want_page;
+    bool modified, want_page;
 
     btree = S2BT(session);
     conn = S2C(session);
@@ -1878,6 +1937,11 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
         return (true);
     }
 
+    if (__evict_skip_tree(session, btree)) {
+        printf("Skipping tree %s\n", session->dhandle->name);
+        return(true);
+    }
+
     /*
      * It's possible (but unlikely) to visit a page without a read generation, if we race with the
      * read instantiating the page. Set the page's read generation here to ensure a bug doesn't
@@ -1886,14 +1950,14 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
     if (__wt_atomic_load64(&page->evict_data.read_gen) == WT_READGEN_NOTSET)
         __wt_evict_touch_page(session, ref, false, false);
 
-    /* XXX Comment out for now *
+    /* Comment out for now */
     want_page = (F_ISSET(evict, WT_EVICT_CACHE_CLEAN) && !modified) ||
       (F_ISSET(evict, WT_EVICT_CACHE_DIRTY) && modified) ||
       (F_ISSET(evict, WT_EVICT_CACHE_UPDATES) && page->modify != NULL);
     if (!want_page) {
         WT_STAT_CONN_INCR(session, eviction_skip_unwanted_pages);
         return (true);
-        }*/
+    }
 
     /*
      * Do not evict a clean metadata page that contains historical data needed to satisfy a reader.
