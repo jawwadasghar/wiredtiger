@@ -8,6 +8,15 @@
 
 #pragma once
 
+struct __wt_evict_bucketset;
+
+struct __wt_evict_bucket {
+    WT_SPINLOCK evict_queue_lock;
+    TAILQ_HEAD(__wt_evictbucket_qh, __wt_page) evict_queue;
+    uint64_t id; /* index in the bucket set */
+    struct __wt_evict_bucketset *bucketset;
+};
+
 /*
  * A key structure for eviction is called a bucket set. Each bucket in a set represents a range of
  * read generations, or any other eviction scores we decide to use in the future. Each bucket has a
@@ -23,53 +32,22 @@
  *
  * We use multiple bucket sets to prioritize eviction. Each tree has its own set of buckets. Leaf
  * pages are in a separate bucket set from internal pages. Clean pages are in a separate bucket set
- * than dirty pages. If contention on bucket queue spinlocks is observed we may introduced a
- * separate bucket set per CPU, similarly to per-CPU statistics counters.
+ * than dirty pages.
  *
- * XXX The lowest bucket upper range tells us the maximum read generation in the lowest bucket. The
- * upper range of the highest bucket is computed by adding the factor of the bucket range times the
- * number of remaining buckets to the lowest buckets' range. If the highest bucket range becomes too
- * small to accommodate the read generation of any page, we update the lowest bucket's range, and by
- * extension the highest bucket's range is updated accordingly. We won't move the pages between
- * buckets even as we update the read generations, because this is expensive. All we care about is
- * maintaining approximately sorted order or pages by their read generations, and this method does
- * the job.
- */
-
-#include "../include/stat.h"
-/* Statistics counter slots are also set to reflect expected contention, so we reuse that value */
-#define WT_EVICT_EXPECTED_CONTENTION WT_STAT_CONN_COUNTER_SLOTS
-
-/*
- * The number of buckets is set at initialization. It is computed as the size of cache in GB
- * times ten, times expected contention (see above variable). If this value computes to zero,
- * we use the number of buckets equivalent to expected contention.
- */
-static uint64_t WT_EVICT_NUM_BUCKETS;
-
-#define WT_EVICT_LEVEL_WONT_NEED_LEAF 0
-#define WT_EVICT_LEVEL_CLEAN_LEAF 1
-#define WT_EVICT_LEVEL_DIRTY_LEAF 2
-#define WT_EVICT_LEVEL_WONT_NEED_INTERNAL 3
-#define WT_EVICT_LEVEL_CLEAN_INTERNAL 4
-#define WT_EVICT_LEVEL_DIRTY_INTERNAL 5
-#define WT_EVICT_LEVELS WT_EVICT_LEVEL_DIRTY_INTERNAL + 1
-
-struct __wt_evict_bucketset;
-
-struct __wt_evict_bucket {
-    WT_SPINLOCK evict_queue_lock;
-    TAILQ_HEAD(__wt_evictbucket_qh, __wt_page) evict_queue;
-    uint64_t id; /* index in the bucket set */
-    struct __wt_evict_bucketset *bucketset;
-};
-
-/*
- * Per-tree data structure that contains the tree's data needed by eviction.
+ * There is a pair of bucketsets dedicated to pages scheduled for forced eviction. Those pages have
+ * the same read generation, so they are placed in a randomly selected bucket in the bucketset.
  *
- * Each tree has its pages organized in several bucket sets: one for internal pages, one for clean
- * leaf pages and one for dirty leaf pages. Clean leaf pages are at the highest priority for
- * eviction, followed by the dirty leaf pages and followed by the internal pages.
+ * The number of buckets is set at initialization. It is important to get it right. If we don't have
+ * enough buckets we will compete on bucket locks. If we have too many we will spend a long time
+ * looking for non-empty buckets. If the cache is very small and the tree is very large, all we do
+ * is evict; quickly finding evictable pages is our priority, so we set the number of buckets to a
+ * low number. If the cache is well-sized relative to the data, bucket lock contention will dominate
+ * as we move pages between buckets, so we need to have many buckets. The values shown below were
+ * determined experimentally. For most workloads the default value of 9200 will work well.
+ *
+ * If the ratio of tree size to cache size is below 100, set the number of buckets to 9200. If the
+ * ratio is in the range 100-1000, set to 230. If the ratio is 1000 or above set to the expected
+ * number of cores in the system.
  */
 struct __wt_evict_bucketset {
     WT_CACHE_LINE_PAD_BEGIN
@@ -77,18 +55,6 @@ struct __wt_evict_bucketset {
     uint32_t bucket_last_considered; /* must be updated atomically */
     uint64_t bucketset_num_items;    /* must be updated atomically */
     WT_CACHE_LINE_PAD_END
-};
-
-/*
- * Data handle evict data
- */
-struct __wt_evict_handle_data {
-    struct __wt_evict_bucketset evict_bucketset[WT_EVICT_LEVELS];
-    bool initialized;
-    uint64_t evict_priority;                   /* Relative priority of cached pages */
-    wt_shared int32_t evict_disabled;          /* Eviction disabled count */
-    bool evict_disabled_open;                  /* Eviction disabled on open */
-    wt_shared volatile uint32_t evict_busy;    /* Count of threads in eviction */
 };
 
 /*
@@ -124,3 +90,16 @@ struct __wt_evict_page_data {
     bool evict_skip;           /* Skip this page once for eviction */
     bool destroying;           /* Sticky flag set once when the page is being destroyed */
 };
+
+
+/*
+ * Data handle evict data
+ */
+struct __wt_evict_handle_data {
+    bool initialized;
+    uint64_t evict_priority;                   /* Relative priority of cached pages */
+    wt_shared int32_t evict_disabled;          /* Eviction disabled count */
+    bool evict_disabled_open;                  /* Eviction disabled on open */
+    wt_shared volatile uint32_t evict_busy;    /* Count of threads in eviction */
+};
+

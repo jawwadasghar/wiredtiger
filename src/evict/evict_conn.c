@@ -1,7 +1,7 @@
 /*-
  * Copyright (c) 2014-present MongoDB, Inc.
  * Copyright (c) 2008-2014 WiredTiger, Inc.
- *	All rights reserved.
+ *  All rights reserved.
  *
  * See the file LICENSE for redistribution information.
  */
@@ -230,6 +230,11 @@ __wt_evict_config(WT_SESSION_IMPL *session, const char *cfg[], bool reconfig)
     WT_RET(__wt_config_gets(session, cfg, "cache_stuck_timeout_ms", &cval));
     evict->cache_stuck_timeout_ms = (uint64_t)cval.val;
 
+    /* Retrieve the number of buckets in each bucketset */
+    WT_RET(__wt_config_gets(session, cfg, "eviction.evict_num_buckets", &cval));
+    evict->evict_num_buckets = (uint32_t)cval.val;
+    printf("Num buckets is %" PRIu32 "\n", evict->evict_num_buckets);
+
     /*
      * Resize the thread group if reconfiguring, otherwise the thread group will be initialized as
      * part of creating the connection workers.
@@ -260,6 +265,9 @@ __wt_evict_create(WT_SESSION_IMPL *session, const char *cfg[])
 {
     WT_CONNECTION_IMPL *conn;
     WT_EVICT *evict;
+    WT_EVICT_BUCKET *bucket;
+    WT_EVICT_BUCKETSET *bucketset;
+    uint32_t i, j;
 
     conn = S2C(session);
 
@@ -278,10 +286,30 @@ __wt_evict_create(WT_SESSION_IMPL *session, const char *cfg[])
     evict->read_gen_oldest = WT_READGEN_START_VALUE;
     __wt_atomic_store64(&evict->read_gen, WT_READGEN_START_VALUE);
 
-	WT_RET(__wt_cond_auto_alloc(
+    WT_RET(__wt_cond_auto_alloc(
       session, "evict server", 10 * WT_THOUSAND, WT_MILLION, &evict->evict_server_cond));
     WT_RET(__wt_spin_init(session, &conn->evict->evict_exclusive_lock, "evict-exclusive"));
-	WT_RET(__wt_spin_init(session, &conn->evict->evict_housekeeping_lock, "evict-housekeeping"));
+    WT_RET(__wt_spin_init(session, &conn->evict->evict_housekeeping_lock, "evict-housekeeping"));
+
+    /*
+     * Allocate the eviction buckets.
+     *
+     * Lower numbered bucket sets have a higher eviction priority.
+     */
+    printf("allocating %" PRIu32 " buckets\n", evict->evict_num_buckets);
+    for (i = 0; i < WT_EVICT_LEVELS; i++) {
+        bucketset = &evict->evict_bucketset[i];
+        WT_RET(__wt_calloc(session, evict->evict_num_buckets, sizeof(WT_EVICT_BUCKET),
+                           &bucketset->buckets));
+
+        for (j = 0; j <  evict->evict_num_buckets; j++) {
+            bucket = &bucketset->buckets[j];
+            bucket->bucketset = bucketset;
+            bucket->id = (uint64_t)j;
+            WT_RET(__wt_spin_init(session, &bucket->evict_queue_lock, "evict bucket queue lock"));
+            TAILQ_INIT(&bucket->evict_queue);
+        }
+    }
 
     /*
      * We get/set some values in the evict statistics (rather than have two copies), configure them.

@@ -14,11 +14,21 @@
 #define WT_EVICT_DISABLED(btree) btree->evict_data.evict_disabled
 #define WT_EVICT_PAGE_CLEARED(page) (page->evict_data.bucket == NULL)
 
+#define WT_EVICT_LEVEL_WONT_NEED_LEAF 0
+#define WT_EVICT_LEVEL_CLEAN_LEAF 1
+#define WT_EVICT_LEVEL_DIRTY_LEAF 2
+#define WT_EVICT_LEVEL_WONT_NEED_INTERNAL 3
+#define WT_EVICT_LEVEL_CLEAN_INTERNAL 4
+#define WT_EVICT_LEVEL_DIRTY_INTERNAL 5
+#define WT_EVICT_LEVELS WT_EVICT_LEVEL_DIRTY_INTERNAL + 1
+
+
 /*
  * Connection evict data.
  */
 struct __wt_evict {
-
+    struct __wt_evict_bucketset evict_bucketset[WT_EVICT_LEVELS];
+    uint32_t evict_num_buckets;
     WT_SPINLOCK evict_exclusive_lock;
     wt_shared volatile uint64_t eviction_progress; /* Eviction progress count */
     uint64_t last_eviction_progress;               /* Tracked eviction progress */
@@ -130,8 +140,6 @@ extern int __wt_evict_destroy(WT_SESSION_IMPL *session)
 extern int __wt_evict_file(WT_SESSION_IMPL *session, WT_CACHE_OP syncop)
   WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));
 extern int __wt_evict_file_exclusive_on(WT_SESSION_IMPL *session)
-  WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));
-extern int __wt_evict_init_handle_data(WT_SESSION_IMPL *session, WT_DATA_HANDLE *dhandle)
   WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));
 extern int __wt_evict_threads_create(WT_SESSION_IMPL *session)
   WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));

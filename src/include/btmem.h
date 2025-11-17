@@ -7,7 +7,6 @@
  */
 
 #pragma once
-
 #define WT_RECNO_OOB 0 /* Illegal record number */
 
 /* AUTOMATIC FLAG VALUE GENERATION START 0 */
@@ -776,7 +775,7 @@ struct __wt_page {
 
     /* Back pointer to the ref pointing to this page */
     WT_REF *ref;
-    WT_EVICT_PAGE_DATA evict_data;  /* Data used by eviction */
+    struct __wt_evict_page_data evict_data; /* Data used by eviction */
 
 #ifdef HAVE_DIAGNOSTIC
 #define WT_SPLIT_SAVE_STATE_MAX 3

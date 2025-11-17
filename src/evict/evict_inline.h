@@ -8,6 +8,10 @@
 
 #pragma once
 
+#include "../include/stat.h"
+/* Counter slots are set to be around the expected number of cores */
+#define WT_EVICT_EXPECTED_CONTENTION WT_STAT_CONN_COUNTER_SLOTS
+
 #define EVICT_DEBUG_PRINT 0
 
 /*
@@ -86,9 +90,12 @@ __wt_evict_cache_stuck(WT_SESSION_IMPL *session)
  * length of bucket array.
  */
 static uint64_t
-__evict_base_bucket(uint64_t read_gen)
+__evict_base_bucket(WT_SESSION_IMPL *session, uint64_t read_gen)
 {
-    return (read_gen / WT_READGEN_STEP * WT_EVICT_EXPECTED_CONTENTION) % WT_EVICT_NUM_BUCKETS;
+    uint32_t num_buckets;
+
+    num_buckets = S2C(session)->evict->evict_num_buckets;
+    return (read_gen / WT_READGEN_STEP * WT_EVICT_EXPECTED_CONTENTION) % num_buckets;
 }
 
 /*
@@ -98,22 +105,18 @@ __evict_base_bucket(uint64_t read_gen)
 static WT_INLINE uint64_t
 __evict_destination_bucket(WT_SESSION_IMPL *session, uint64_t read_gen)
 {
+    uint32_t num_buckets;
 
-#ifdef RANDOM_EVICTION
-    (void)read_gen;
-    return  (uint64_t)(__wt_random(&session->rnd)) % WT_EVICT_NUM_BUCKETS;
-#else
-
+    num_buckets = S2C(session)->evict->evict_num_buckets;
     /*
      * If this is a page we won't need, it goes into a distinct bucketset. In that bucketset
      * all pages have the same read generation, so we place into a randomly selected bucket.
      */
     if (read_gen == WT_READGEN_WONT_NEED || read_gen == WT_READGEN_EVICT_SOON) {
-        return (uint64_t)__wt_random(&session->rnd) % WT_EVICT_NUM_BUCKETS;
+        return (uint64_t)__wt_random(&session->rnd) % num_buckets;
     }
-    return (__evict_base_bucket(read_gen) + session->id % WT_EVICT_EXPECTED_CONTENTION)
-        % WT_EVICT_NUM_BUCKETS;
-#endif
+    return (__evict_base_bucket(session, read_gen) + session->id % WT_EVICT_EXPECTED_CONTENTION)
+        % num_buckets;
 }
 
 /*
@@ -155,44 +158,26 @@ __wt_evict_get_bucketset_level(WT_SESSION_IMPL *session, WT_PAGE *page)
  *     false and set the bucketset return pointer to the right bucketset.
  */
 static WT_INLINE bool
-__evict_page_get_bucketset(WT_SESSION_IMPL *session, WT_DATA_HANDLE *dhandle, WT_PAGE *page,
-                           WT_EVICT_BUCKETSET **bucketset)
+__evict_page_get_bucketset(WT_SESSION_IMPL *session, WT_PAGE *page, WT_EVICT_BUCKETSET **bucketset)
 {
-    WT_EVICT_HANDLE_DATA *evict_handle_data;
+    WT_EVICT *evict;
     int correct_bucketset_level;
 
     *bucketset = NULL;
     correct_bucketset_level = -1;
-
-    if (!WT_DHANDLE_BTREE(dhandle)) {
-#ifdef HAVE_DIAGNOSTIC
-        WT_IGNORE_RET(__wt_msg(session,
-          "page (%s) %p: dhandle is not btree, should not be in eviction",
-                               __wt_page_type_string(page->type), (void*)page));
-#endif
-        return false;
-    }
-    evict_handle_data = &((WT_BTREE*)dhandle->handle)->evict_data;
-    if (!evict_handle_data->initialized) {
-#ifdef HAVE_DIAGNOSTIC
-        WT_IGNORE_RET(__wt_msg(session,
-                               "page (%s) %p: dhandle evict data is not initialized",
-                               __wt_page_type_string(page->type), (void*)page));
-#endif
-        return false;
-    }
+    evict = S2C(session)->evict;
 
     /* Find the right bucketset level for the page */
     correct_bucketset_level = __wt_evict_get_bucketset_level(session, page);
 
     WT_ASSERT(session, correct_bucketset_level >= 0 && correct_bucketset_level < WT_EVICT_LEVELS);
     if (page->evict_data.bucket == NULL) {
-        *bucketset = &evict_handle_data->evict_bucketset[correct_bucketset_level];
+        *bucketset = &evict->evict_bucketset[correct_bucketset_level];
         return false;
     }
 
     *bucketset =  page->evict_data.bucket->bucketset;
-    if (&evict_handle_data->evict_bucketset[correct_bucketset_level] == *bucketset)
+    if (&evict->evict_bucketset[correct_bucketset_level] == *bucketset)
         return true;
     else
         return false;
@@ -203,8 +188,7 @@ __evict_page_get_bucketset(WT_SESSION_IMPL *session, WT_DATA_HANDLE *dhandle, WT
  *     A quick check to see if the page will need to be moved into a new bucket.
  */
 static WT_INLINE bool
-__evict_needs_new_bucket(WT_SESSION_IMPL *session, WT_DATA_HANDLE *dhandle, WT_PAGE *page,
-                         uint64_t *ret_id)
+__evict_needs_new_bucket(WT_SESSION_IMPL *session, WT_PAGE *page, uint64_t *ret_id)
 {
     WT_EVICT_BUCKETSET *bucketset;
     uint64_t cur_bucket_id, read_gen;
@@ -215,10 +199,6 @@ __evict_needs_new_bucket(WT_SESSION_IMPL *session, WT_DATA_HANDLE *dhandle, WT_P
     if (__wt_atomic_load_pointer(&page->evict_data.bucket) == NULL)
         return true;
 
-#ifdef RANDOM_EVICTION
-    return false;
-#endif
-
     /*
      * Ok if these turn out to be inconsistent with one another: e.g.,
      * someone modifies the read generation before moving the page to
@@ -228,7 +208,7 @@ __evict_needs_new_bucket(WT_SESSION_IMPL *session, WT_DATA_HANDLE *dhandle, WT_P
     read_gen = __wt_atomic_load64(&page->evict_data.read_gen);
     cur_bucket_id = __wt_atomic_load64(&page->evict_data.bucket->id);
 
-    if (__evict_page_get_bucketset(session, dhandle, page, &bucketset) == false)
+    if (__evict_page_get_bucketset(session, page, &bucketset) == false)
         return true;
 
     if (read_gen == WT_READGEN_WONT_NEED || read_gen == WT_READGEN_EVICT_SOON)
@@ -241,8 +221,8 @@ __evict_needs_new_bucket(WT_SESSION_IMPL *session, WT_DATA_HANDLE *dhandle, WT_P
      * If the page is somewhere between the base bucket for its current read generation and
      * the read generation at the next step, it's in the right place.
      */
-    if (cur_bucket_id >= __evict_base_bucket(read_gen) &&
-        cur_bucket_id < __evict_base_bucket(read_gen + WT_READGEN_STEP)) {
+    if (cur_bucket_id >= __evict_base_bucket(session, read_gen) &&
+        cur_bucket_id < __evict_base_bucket(session, read_gen + WT_READGEN_STEP)) {
         return false;
     }
     else {
