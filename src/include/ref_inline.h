@@ -172,8 +172,6 @@ __wt_ref_make_visible(WT_SESSION_IMPL *session, WT_REF *ref, bool wont_need) {
         WT_ASSERT(session, ref->page->ref == ref);
 
     if ((current_state = WT_REF_GET_STATE(ref)) != WT_REF_LOCKED) {
-//        WT_ASSERT(session, current_state == WT_REF_DISK || current_state == WT_REF_MEM);
-        //printf("state = %d\n", (int)current_state);
         WT_REF_LOCK(session, ref, &previous_state);
     }
     else
