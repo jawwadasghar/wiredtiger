@@ -486,6 +486,8 @@ class WiredTigerTestCase(abstract_test_case.AbstractWiredTigerTestCase):
         pass
 
     def setUp(self):
+        print("--- setUp {}", self)
+
         if not hasattr(self.__class__, 'wt_ntests'):
             self.__class__.wt_ntests = 0
 
@@ -1119,14 +1121,34 @@ def wrap_result_for_tags(thread_safe_result, thread_number):
     thread_safe_result.tags = types.MethodType(immediate_tags, thread_safe_result)
     return thread_safe_result
 
-def runsuite(suite, parallel):
-    suite_to_run = suite
-    if parallel > 1:
-        from concurrencytest import ConcurrentTestSuite, fork_for_tests
-        if not WiredTigerTestCase._globalSetup:
-            WiredTigerTestCase.globalSetup({})
-        WiredTigerTestCase._concurrent = True
-        suite_to_run = ConcurrentTestSuite(suite, fork_for_tests(parallel), wrap_result=wrap_result_for_tags)
+from testtools import iterate_tests
+from itertools import cycle
+from multiprocessing import Pool
+
+def partition_tests(suite, count):
+    """Partition suite into count lists of tests."""
+    # This just assigns tests in a round-robin fashion.  On one hand this
+    # splits up blocks of related tests that might run faster if they shared
+    # resources, but on the other it avoids assigning blocks of slow tests to
+    # just one partition.  So the slowest partition shouldn't be much slower
+    # than the fastest.
+    partitions = [list() for _ in range(count)]
+    tests = iterate_tests(suite)
+    for partition, test in zip(cycle(partitions), tests):
+        partition.append(test)
+    return partitions
+
+def split_suite(suite, concurrency_num):
+    # For ConcurrentTestSuite, make_tests should return an iterable of test objects
+    # To run sequentially, just return the suite wrapped in a list
+    test_blocks = partition_tests(suite, concurrency_num)
+    result = []
+    for tests in test_blocks:
+        process_suite = unittest.TestSuite(tests)
+        result.append(process_suite)
+    return result
+
+def runsuite_single(suite_to_run):
     try:
         if WiredTigerTestCase._randomseed:
             WiredTigerTestCase.prout("Starting test suite with seedw={0} and seedz={1}. Rerun this test with -seed {0}.{1} to get the same randomness"
@@ -1134,15 +1156,55 @@ def runsuite(suite, parallel):
         result_class = None
         if WiredTigerTestCase._verbose > 1:
             result_class = test_result.PidAwareTextTestResult
+
         result = unittest.TextTestRunner(
             verbosity=WiredTigerTestCase._verbose, resultclass=result_class).run(suite_to_run)
-        WiredTigerTestCase.finalReport()
-        return result
+
+        # Return a picklable summary instead of the full result object
+        return {
+            'wasSuccessful': result.wasSuccessful(),
+            'testsRun': result.testsRun,
+            'failures': len(result.failures),
+            'errors': len(result.errors),
+            'skipped': len(result.skipped) if hasattr(result, 'skipped') else 0,
+            'expectedFailures': len(result.expectedFailures) if hasattr(result, 'expectedFailures') else 0,
+            'unexpectedSuccesses': len(result.unexpectedSuccesses) if hasattr(result, 'unexpectedSuccesses') else 0,
+        }
     except BaseException as e:
         # This should not happen for regular test errors, unittest should catch everything
         print("[pid:{}]: ERROR: running test: {}".format(os.getpid(), e))
         raise e
 
+def runsuite(suite, parallel):
+    suite_to_run = suite
+    results = []
+    if parallel <= 1:
+        result = runsuite_single(suite)
+        # For single-threaded, runsuite_single returns a dict
+        results.append(result)
+    else:
+        if not WiredTigerTestCase._globalSetup:
+            WiredTigerTestCase.globalSetup({})
+        # Enable concurrent mode for proper test directory naming
+        WiredTigerTestCase._concurrent = True
+
+        suites = split_suite(suite, parallel)
+
+        with Pool(parallel) as pool:
+            results = pool.map(runsuite_single, suites)
+
+    WiredTigerTestCase.finalReport()
+
+    # Check if any result indicates failure
+    all_successful = True
+    for result in results:
+        # result is now a dict with 'wasSuccessful' key
+        if not result['wasSuccessful']:
+            all_successful = False
+            break
+
+    return all_successful
+
 def run(name='__main__'):
     result = runsuite(unittest.TestLoader().loadTestsFromName(name), False)
-    sys.exit(0 if result.wasSuccessful() else 1)
+    sys.exit(0 if result else 1)

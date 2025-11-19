@@ -665,6 +665,6 @@ if __name__ == '__main__':
             print(line)
     else:
         result = wttest.runsuite(tests, parallel)
-        sys.exit(0 if result.wasSuccessful() else 1)
+        sys.exit(0 if result else 1)
 
     sys.exit(0)
