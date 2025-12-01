@@ -563,6 +563,8 @@ __wt_cache_dirty_decr(WT_SESSION_IMPL *session, WT_PAGE *page)
     modify = page->modify;
     if (modify != NULL && modify->bytes_dirty != 0)
         __wt_cache_page_byte_dirty_decr(session, page, modify->bytes_dirty);
+
+    __wt_evict_page_set_clean(session, page);
 }
 
 /*

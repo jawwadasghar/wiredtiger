@@ -486,7 +486,6 @@ struct __wt_connection_stats {
     int64_t cache_read_app_time;
     int64_t cache_write_app_count;
     int64_t cache_write_app_time;
-    int64_t eviction_new_page_in_old_bucket;
     int64_t cache_bytes_updates;
     int64_t cache_bytes_image;
     int64_t cache_bytes_hs;
@@ -510,6 +509,7 @@ struct __wt_connection_stats {
     int64_t cache_eviction_blocked_remove_hs_race_with_checkpoint;
     int64_t cache_eviction_blocked_no_progress;
     int64_t eviction_slow;
+    int64_t eviction_clean_pages_with_updates_selected;
     int64_t eviction_target_bucket_clean_internal;
     int64_t eviction_target_bucket_clean_leaf;
     int64_t eviction_target_bucket_dirty_internal;
@@ -605,6 +605,7 @@ struct __wt_connection_stats {
     int64_t eviction_fail;
     int64_t eviction_fail_active_children_on_an_internal_page;
     int64_t eviction_fail_in_reconciliation;
+    int64_t eviction_pages_set_clean;
     int64_t cache_write;
     int64_t cache_write_restore;
     int64_t cache_overhead;
