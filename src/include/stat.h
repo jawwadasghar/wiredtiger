@@ -517,8 +517,12 @@ struct __wt_connection_stats {
     int64_t eviction_target_bucket_wont_need_internal;
     int64_t eviction_target_bucket_wont_need_leaf;
     int64_t eviction_server_readgen;
-    int64_t eviction_skip_pages_locked_or_evicted;
-    int64_t eviction_skip_pages_flag;
+    int64_t eviction_skip_page_locked;
+    int64_t eviction_skip_page_hazard;
+    int64_t eviction_skip_page_locked_bucket;
+    int64_t eviction_skip_empty_bucket;
+    int64_t eviction_skip_page_dirty_not_aggressive;
+    int64_t eviction_skip_page_cannot_evict;
     int64_t eviction_skip_dirty_pages_during_checkpoint;
     int64_t eviction_skip_intl_page_with_active_child;
     int64_t eviction_skip_metatdata_with_history;
@@ -531,8 +535,10 @@ struct __wt_connection_stats {
     int64_t eviction_skip_trees_eviction_disabled;
     int64_t eviction_state;
     int64_t eviction_target_strategy_both_clean_and_dirty;
+    int64_t eviction_target_strategy_none;
     int64_t eviction_target_strategy_clean;
     int64_t eviction_target_strategy_dirty;
+    int64_t eviction_target_strategy_updates_only;
     int64_t eviction_active_workers;
     int64_t eviction_stable_state_workers;
     int64_t eviction_slept;

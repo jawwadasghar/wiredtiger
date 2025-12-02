@@ -961,11 +961,6 @@ __evict_get_ref(
     WT_REF *ref;
     WT_REF_STATE previous_state;
     uint32_t i, iter, j, max_level, num_buckets;
-    int locked_bucket, hazard_check, locked_ref, locked_ref2, skip_flag, skip_function, queue_empty;
-
-    locked_bucket = hazard_check = locked_ref = locked_ref2 = skip_flag = skip_function = queue_empty = 0;
-
-    (void)locked_bucket;
 
     *btreep = NULL;
     bucketset = NULL;
@@ -1008,13 +1003,13 @@ __evict_get_ref(
             bucket = &bucketset->buckets[j];
 
             if (__wt_spin_trylock(session, &bucket->evict_queue_lock) == EBUSY) {
-                locked_bucket++;
+                WT_STAT_CONN_INCR(session, eviction_skip_page_locked_bucket);
                 continue;
             }
             __wt_atomic_store32(&bucketset->bucket_last_considered, j);
 
             if (TAILQ_EMPTY(&bucket->evict_queue))
-                queue_empty++;
+                WT_STAT_CONN_INCR(session, eviction_skip_empty_bucket);
 
             /* Iterate over the pages in the bucket until we find one that's available. */
             TAILQ_FOREACH (page, &bucket->evict_queue, evict_data.evict_q) {
@@ -1023,17 +1018,15 @@ __evict_get_ref(
 
                 /* Try to lock the reference. If it's already locked, skip it. */
                 previous_state =  WT_REF_GET_STATE(ref);
-                WT_ASSERT(session, previous_state == WT_REF_LOCKED || previous_state ==WT_REF_MEM);
+                WT_ASSERT(session, previous_state == WT_REF_LOCKED || previous_state == WT_REF_MEM);
                 if (previous_state == WT_REF_LOCKED) {
-                    WT_STAT_CONN_INCR(session, eviction_skip_pages_locked_or_evicted);
+                    WT_STAT_CONN_INCR(session, eviction_skip_page_locked);
                     ref = NULL;
-                    locked_ref++;
                     continue;
                 } else if (previous_state == WT_REF_MEM) {
                     if (!WT_REF_CAS_STATE(session, ref, previous_state, WT_REF_LOCKED)) {
-                        WT_STAT_CONN_INCR(session, eviction_skip_pages_locked_or_evicted);
+                        WT_STAT_CONN_INCR(session, eviction_skip_page_locked);
                         ref = NULL;
-                        locked_ref2++;
                         continue;
                     }
                 }
@@ -1049,7 +1042,7 @@ __evict_get_ref(
                     ref = NULL;
 
                     (void)__wt_atomic_subi32(&page->evict_data.dhandle->session_inuse, 1);
-                    hazard_check++;
+                    WT_STAT_CONN_INCR(session, eviction_skip_page_hazard);
                     continue;
                 }
                 if (page->evict_data.evict_skip) {
@@ -1062,10 +1055,7 @@ __evict_get_ref(
                     ref = NULL;
 
                     (void)__wt_atomic_subi32(&page->evict_data.dhandle->session_inuse, 1);
-                    WT_STAT_CONN_INCR(session, eviction_skip_pages_flag);
-                    __wt_verbose_debug1(session, WT_VERB_EVICTION, "%s",
-                                        "eviction skipped a page because skip flag was set");
-                    skip_flag++;
+                    WT_STAT_CONN_INCR(session, eviction_skip_pages_retry);
                     continue;
                 } else {
                     bool skip_page;
@@ -1075,7 +1065,6 @@ __evict_get_ref(
                         ref = NULL;
 
                         (void)__wt_atomic_subi32(&page->evict_data.dhandle->session_inuse, 1);
-                        skip_function++;
                         continue;
                     } else /* found a reference */
                         goto unlock_bucket_and_done;
@@ -1823,6 +1812,7 @@ __wt_evict_page_set_clean(WT_SESSION_IMPL *session, WT_PAGE *page)
     }
 }
 
+#if 0
 /*
  * __evict_skip_tree --
  *     Decide if we should skip this tree
@@ -1886,6 +1876,7 @@ __evict_skip_tree(WT_SESSION_IMPL *session, WT_BTREE *btree)
 
     return (!want_tree);
 }
+#endif
 
 /*
  * __evict_skip_page --
@@ -1911,11 +1902,11 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
         WT_STAT_CONN_INCR(session, eviction_skip_dirty_pages_during_checkpoint);
         return (true);
     }
-
+/*
     if (__evict_skip_tree(session, btree)) {
         return(true);
     }
-
+*/
     /*
      * It's possible (but unlikely) to visit a page without a read generation, if we race with the
      * read instantiating the page. Set the page's read generation here to ensure a bug doesn't
@@ -1923,6 +1914,15 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
      */
     if (__wt_atomic_load64(&page->evict_data.read_gen) == WT_READGEN_NOTSET)
         __wt_evict_touch_page(session, ref, false, false);
+
+    if (!F_ISSET(evict, WT_EVICT_CACHE_CLEAN) && !F_ISSET(evict, WT_EVICT_CACHE_DIRTY)) {
+        if (F_ISSET(evict, WT_EVICT_CACHE_UPDATES))
+            WT_STAT_CONN_INCR(session, eviction_target_strategy_updates_only);
+    }
+
+    if (!F_ISSET(evict, WT_EVICT_CACHE_CLEAN) && !F_ISSET(evict, WT_EVICT_CACHE_DIRTY) &&
+        !F_ISSET(evict, WT_EVICT_CACHE_UPDATES))
+        WT_STAT_CONN_INCR(session, eviction_target_strategy_none);
 
     want_page = (F_ISSET(evict, WT_EVICT_CACHE_CLEAN) && !modified) ||
       (F_ISSET(evict, WT_EVICT_CACHE_DIRTY) && modified) ||
@@ -1956,12 +1956,16 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
     }
 
     /* Evaluate dirty page candidacy, when eviction is not aggressive. */
-    if (!__wt_evict_aggressive(session) && modified && __evict_skip_dirty_candidate(session, page))
+    if (!__wt_evict_aggressive(session) && modified && __evict_skip_dirty_candidate(session, page)) {
+        WT_STAT_CONN_INCR(session, eviction_skip_page_dirty_not_aggressive);
         return (true);
+    }
 
     /* If the page can't be evicted, give up. */
-    if (!__wt_page_can_evict(session, ref, NULL))
+    if (!__wt_page_can_evict(session, ref, NULL)) {
+        WT_STAT_CONN_INCR(session, eviction_skip_page_cannot_evict);
         return (true);
+    }
 
     return (false);
 }
