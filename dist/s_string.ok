@@ -955,7 +955,6 @@ keyid
 keyids
 keylen
 keyv
-kp
 kv
 kvraw
 kvs
@@ -1162,8 +1161,6 @@ pfx
 pid
 pindexp
 plh
-plhandle
-pluggable
 pmem
 poptable
 popthreads
