@@ -182,6 +182,7 @@ __evict_thread_run(WT_SESSION_IMPL *session, WT_THREAD *thread)
     /* Designate one thread to act as a server. */
     if (__wt_atomic_loadbool(&conn->evict_server_running) &&
         __wt_spin_trylock(session, &evict->evict_housekeeping_lock) == 0) {
+        printf("Server\n");
         ret = __evict_server(session, &did_work);
         __wt_spin_unlock(session,  &evict->evict_housekeeping_lock);
         WT_ERR(ret);
@@ -190,9 +191,10 @@ __evict_thread_run(WT_SESSION_IMPL *session, WT_THREAD *thread)
         __wt_cond_auto_wait(session, evict->evict_server_cond, did_work, NULL);
         __wt_verbose_debug2(session, WT_VERB_EVICTION, "%s", "waking");
     }
-    else
+    else {
+        printf("evict_lru_pages\n");
         WT_ERR(__evict_lru_pages(session, false));
-
+    }
     if (0) {
 err:
         WT_RET_PANIC(session, ret, "eviction thread error");
@@ -344,10 +346,6 @@ __evict_lru_pages(WT_SESSION_IMPL *session, bool is_server)
     WT_TRACK_OP_INIT(session);
     conn = S2C(session);
 
-    /*
-     * Reconcile and discard some pages: EBUSY is returned if a page fails eviction because it's
-     * unavailable, continue in that case.
-     */
     while (F_ISSET(conn, WT_CONN_EVICTION_RUN) && __evict_update_work(session) && ret == 0) {
         if ((ret = __evict_page(session)) == EBUSY)
             ret = 0;
@@ -796,8 +794,10 @@ __evict_server(WT_SESSION_IMPL *session, bool *did_work)
          */
         WT_RET(__wt_txn_update_oldest(session, WT_TXN_OLDEST_STRICT));
 
-        if (!__evict_update_work(session))
+        if (!__evict_update_work(session)) {
+            printf("break\n");
             break;
+        }
 
         __wt_verbose_debug2(session, WT_VERB_EVICTION,
           "Eviction pass with: Max: %" PRIu64 " In use: %" PRIu64 " Dirty: %" PRIu64
@@ -961,6 +961,7 @@ __evict_get_ref(
     WT_REF *ref;
     WT_REF_STATE previous_state;
     uint32_t i, iter, j, max_level, num_buckets;
+    uint64_t total_items;
 
     *btreep = NULL;
     bucketset = NULL;
@@ -970,6 +971,7 @@ __evict_get_ref(
     max_level = 0;
     num_buckets = evict->evict_num_buckets;
     previous_state = 0;
+    total_items = 0;
 
     /*
      * It is polite to initialize output variables, but it isn't safe for callers to use the
@@ -992,11 +994,23 @@ __evict_get_ref(
      */
     if (F_ISSET(evict, WT_EVICT_CACHE_CLEAN))
         max_level = WT_EVICT_LEVEL_CLEAN_LEAF;
-    else
+    if (F_ISSET(evict, WT_EVICT_CACHE_DIRTY) || F_ISSET(evict, WT_EVICT_CACHE_UPDATES))
         max_level = WT_EVICT_LEVEL_DIRTY_INTERNAL;
+
+    printf("enter evict_get_ref, max_level = %d\n", (int)max_level);
+
+    for (i = 0; i < WT_EVICT_LEVELS; i++) {
+        total_items += evict->evict_bucketset[i].bucketset_num_items;
+        printf("level [%d]: %" PRIu64 " items\n",
+               (int)i, evict->evict_bucketset[i].bucketset_num_items);
+    }
+    printf("Total items:  %" PRIu64 "\n", total_items);
 
     for (i = 0; i <= max_level; i++) {
         bucketset = &evict->evict_bucketset[i];
+        if (bucketset->bucketset_num_items == 0)
+            continue;
+
         for (j = __wt_atomic_load32(&bucketset->bucket_last_considered) % num_buckets, iter = 0;
              iter++ < num_buckets; j = (j+1) % num_buckets) {
 
@@ -1059,6 +1073,7 @@ __evict_get_ref(
                     continue;
                 } else {
                     bool skip_page;
+
                     WT_WITH_DHANDLE(session, page->evict_data.dhandle, skip_page = __evict_skip_page(session, ref));
                     if (skip_page) {
                         WT_REF_UNLOCK(ref, previous_state);
@@ -1091,14 +1106,19 @@ done:
 
         /* Decrement items in the bucketset where the page came from */
         __wt_atomic_subv64(&bucketset->bucketset_num_items, 1);
-
         /*
          * Increment the busy count in the btree handle to prevent it from being closed under us.
          */
         (void)__wt_atomic_addv32(&((*btreep)->evict_data.evict_busy), 1);
         (void)__wt_atomic_subi32(&page->evict_data.dhandle->session_inuse, 1);
-    } else
+        printf("evict_get_ref returning %p\n", ref->page);
+        if (ref->page->modify != NULL && __wt_page_evict_clean(ref->page))
+            printf("in evict_get_ref page %p was clean with updates, found at level %d\n", ref->page, (int)i);
+    } else {
         WT_STAT_CONN_INCR(session, eviction_get_ref_empty);
+        printf("evict_get_ref returning NULL. max_level = %d, evict flags: %d\n",
+               (int)max_level, (int)evict->flags);
+    }
 
     ret = (*refp == NULL ? WT_NOTFOUND : 0);
     return (ret);
@@ -1126,6 +1146,7 @@ __evict_page(WT_SESSION_IMPL *session)
     flags = 0;
     page_is_modified = false;
 
+    printf("Here\n");
     WT_RET_TRACK(__evict_get_ref(session, &btree, &ref, &previous_state));
     WT_ASSERT(session,
               (WT_REF_GET_STATE(ref) == WT_REF_LOCKED
@@ -1696,7 +1717,6 @@ __wt_evict_enqueue_page(WT_SESSION_IMPL *session, WT_REF *ref)
     page->evict_data.bucket = bucket;
     __wt_atomic_addv64(&bucketset->bucketset_num_items, 1);
 
-    times++;
     WT_STAT_CONN_INCR(session, eviction_enqueued_page);
 done:
     if (must_unlock_ref)
@@ -1900,6 +1920,7 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
     /* Don't queue dirty pages in trees during checkpoints. */
     if (modified && WT_BTREE_SYNCING(btree)) {
         WT_STAT_CONN_INCR(session, eviction_skip_dirty_pages_during_checkpoint);
+        printf("Skipping dirty page during checkpoint\n");
         return (true);
     }
 /*
@@ -1926,11 +1947,13 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
 
     want_page = (F_ISSET(evict, WT_EVICT_CACHE_CLEAN) && !modified) ||
       (F_ISSET(evict, WT_EVICT_CACHE_DIRTY) && modified) ||
-      (F_ISSET(evict, WT_EVICT_CACHE_UPDATES) && page->modify != NULL);
+        (F_ISSET(evict, WT_EVICT_CACHE_UPDATES) && page->modify != NULL);
+
     if (!want_page) {
         WT_STAT_CONN_INCR(session, eviction_skip_unwanted_pages);
-        if (F_ISSET(evict, WT_EVICT_CACHE_CLEAN))
-            printf("skipping page: EVICT DIRTY: %d, EVICT UPDATES: %d, modified: %d, page->modify: %p\n", F_ISSET(evict, WT_EVICT_CACHE_DIRTY), F_ISSET(evict, WT_EVICT_CACHE_UPDATES), modified, page->modify);
+        printf("skipping page: evict flags %d, EVICT_CLEAN: %d, EVICT DIRTY: %d, EVICT UPDATES: %d, modified: %d, page->modify: %p\n",
+               (int)evict->flags, F_ISSET(evict, WT_EVICT_CACHE_CLEAN), F_ISSET(evict, WT_EVICT_CACHE_DIRTY),
+               F_ISSET(evict, WT_EVICT_CACHE_UPDATES), modified, page->modify);
         return (true);
     }
 
@@ -1943,6 +1966,7 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
       F_ISSET(ref, WT_REF_FLAG_LEAF) && !modified && page->modify != NULL &&
       !__wt_txn_visible_all(session, page->modify->rec_max_txn, page->modify->rec_max_timestamp)) {
         WT_STAT_CONN_INCR(session, eviction_skip_metatdata_with_history);
+        printf("skipping metadata with history\n");
         return (true);
     }
 
@@ -1952,18 +1976,21 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
     if (F_ISSET(ref, WT_REF_FLAG_INTERNAL) &&
       __evict_internal_page_has_cached_children(session, ref)) {
         WT_STAT_CONN_INCR(session, eviction_skip_intl_page_with_active_child);
+        printf("skipping internal page with active children\n");
         return (true);
     }
 
     /* Evaluate dirty page candidacy, when eviction is not aggressive. */
     if (!__wt_evict_aggressive(session) && modified && __evict_skip_dirty_candidate(session, page)) {
         WT_STAT_CONN_INCR(session, eviction_skip_page_dirty_not_aggressive);
+        printf("skipping because of __evict_skip_dirty_candidate\n");
         return (true);
     }
 
     /* If the page can't be evicted, give up. */
     if (!__wt_page_can_evict(session, ref, NULL)) {
         WT_STAT_CONN_INCR(session, eviction_skip_page_cannot_evict);
+        printf("skipping because cannot evict\n");
         return (true);
     }
 
