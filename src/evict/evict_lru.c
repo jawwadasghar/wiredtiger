@@ -182,7 +182,6 @@ __evict_thread_run(WT_SESSION_IMPL *session, WT_THREAD *thread)
     /* Designate one thread to act as a server. */
     if (__wt_atomic_loadbool(&conn->evict_server_running) &&
         __wt_spin_trylock(session, &evict->evict_housekeeping_lock) == 0) {
-        printf("Server\n");
         ret = __evict_server(session, &did_work);
         __wt_spin_unlock(session,  &evict->evict_housekeeping_lock);
         WT_ERR(ret);
@@ -192,7 +191,6 @@ __evict_thread_run(WT_SESSION_IMPL *session, WT_THREAD *thread)
         __wt_verbose_debug2(session, WT_VERB_EVICTION, "%s", "waking");
     }
     else {
-        printf("evict_lru_pages\n");
         WT_ERR(__evict_lru_pages(session, false));
     }
     if (0) {
@@ -346,7 +344,8 @@ __evict_lru_pages(WT_SESSION_IMPL *session, bool is_server)
     WT_TRACK_OP_INIT(session);
     conn = S2C(session);
 
-    while (F_ISSET(conn, WT_CONN_EVICTION_RUN) && __evict_update_work(session) && ret == 0) {
+    while (F_ISSET(conn, WT_CONN_EVICTION_RUN) && __evict_update_work(session) &&
+           F_ISSET(conn->evict, WT_EVICT_CACHE_ANY) && ret == 0) {
         if ((ret = __evict_page(session)) == EBUSY)
             ret = 0;
         if (is_server)
@@ -960,7 +959,7 @@ __evict_get_ref(
     WT_PAGE *page;
     WT_REF *ref;
     WT_REF_STATE previous_state;
-    uint32_t i, iter, j, max_level, num_buckets;
+    uint32_t i, iter, j, min_level, max_level, num_buckets;
     uint64_t total_items;
 
     *btreep = NULL;
@@ -968,7 +967,7 @@ __evict_get_ref(
     conn = S2C(session);
     evict = conn->evict;
     iter = 0;
-    max_level = 0;
+    min_level = max_level = 0;
     num_buckets = evict->evict_num_buckets;
     previous_state = 0;
     total_items = 0;
@@ -979,6 +978,9 @@ __evict_get_ref(
      */
     *previous_statep = WT_REF_MEM;
     *refp = ref = NULL;
+
+    if (!F_ISSET(evict, WT_EVICT_CACHE_ANY))
+        goto done;
 
     /*
      * We iterate over bucket sets in eviction priority order from highest to lowest is:
@@ -997,7 +999,10 @@ __evict_get_ref(
     if (F_ISSET(evict, WT_EVICT_CACHE_DIRTY) || F_ISSET(evict, WT_EVICT_CACHE_UPDATES))
         max_level = WT_EVICT_LEVEL_DIRTY_INTERNAL;
 
-    printf("enter evict_get_ref, max_level = %d\n", (int)max_level);
+    if (!F_ISSET(evict, WT_EVICT_CACHE_CLEAN) && !F_ISSET(evict, WT_EVICT_CACHE_UPDATES))
+        min_level = WT_EVICT_LEVEL_DIRTY_LEAF;
+
+    printf("enter evict_get_ref, min_level = %d, max_level = %d\n", (int)min_level, (int)max_level);
 
     for (i = 0; i < WT_EVICT_LEVELS; i++) {
         total_items += evict->evict_bucketset[i].bucketset_num_items;
@@ -1006,14 +1011,17 @@ __evict_get_ref(
     }
     printf("Total items:  %" PRIu64 "\n", total_items);
 
-    for (i = 0; i <= max_level; i++) {
+    for (i = min_level; i <= max_level; i++) {
+        if (!F_ISSET(conn->evict, WT_EVICT_CACHE_ANY))
+            break;
         bucketset = &evict->evict_bucketset[i];
         if (bucketset->bucketset_num_items == 0)
             continue;
-
         for (j = __wt_atomic_load32(&bucketset->bucket_last_considered) % num_buckets, iter = 0;
              iter++ < num_buckets; j = (j+1) % num_buckets) {
 
+            if (!F_ISSET(conn->evict, WT_EVICT_CACHE_ANY))
+                break;
             bucket = &bucketset->buckets[j];
 
             if (__wt_spin_trylock(session, &bucket->evict_queue_lock) == EBUSY) {
@@ -1027,6 +1035,8 @@ __evict_get_ref(
 
             /* Iterate over the pages in the bucket until we find one that's available. */
             TAILQ_FOREACH (page, &bucket->evict_queue, evict_data.evict_q) {
+                if (!F_ISSET(conn->evict, WT_EVICT_CACHE_ANY))
+                    break;
                 ref = page->ref;
                 WT_ASSERT(session, ref != NULL);
 
