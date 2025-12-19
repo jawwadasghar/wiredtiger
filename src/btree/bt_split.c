@@ -1768,13 +1768,7 @@ __wt_multi_to_ref(WT_SESSION_IMPL *session, WT_PAGE *page, WT_MULTI *multi, WT_R
     if (multi->disk_image!= NULL && !closing) {
         WT_RET(__split_multi_inmem(session, page, multi, ref));
         __wt_ref_make_visible(session, ref, false);
-        WT_ASSERT(session, ref->page->ref == ref);
     }
-    WT_ASSERT(session, __wt_ref_is_root(ref) || ref->page->evict_data.bucket != NULL);
-    printf("__wt_multi_to_ref: ref %p (%s) page %p, bucket is %s\n", ref,
-           __wt_ref_is_root(ref)?"root":"NOT root", ref->page,
-           (ref->page->evict_data.bucket == NULL)?"null":"NOT null");
-    fflush(stdout);
     __wt_free(session, multi->disk_image);
 
     return (0);

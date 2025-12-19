@@ -1045,8 +1045,12 @@ __evict_get_ref(
                     break;
                 ref = page->ref;
                 WT_ASSERT(session, ref != NULL);
+                /*
+                 * Pages created during splits may end up in the eviction data structures before
+                 * their home gets set. This is the same check as we make for the root page.
+                 * Skip them until their home gets set or if this is a true root.
+                 */
                 if (__wt_ref_is_root(ref)) {
-                    printf("FOUND ROOT in __evict_get_ref\n");
                     ref = NULL;
                     continue;
                 }
@@ -1686,9 +1690,6 @@ __wt_evict_enqueue_page(WT_SESSION_IMPL *session, WT_REF *ref)
     page = ref->page;
     previous_state = WT_REF_GET_STATE(ref);
 
-    if (__wt_ref_is_root(ref))
-        return;
-
     /*
      * If the page isn't valid there is no need to put it into eviction data structures.
      * We can get here if the page is about to be discarded, but it is set clean before
@@ -1786,7 +1787,6 @@ __wt_evict_touch_page(WT_SESSION_IMPL *session, WT_REF *ref, bool internal_only,
         if (bumped || page->evict_data.bucket == NULL)
             __wt_evict_enqueue_page(session, ref);
     }
-    WT_ASSERT(session, __wt_ref_is_root(ref) || page->evict_data.bucket != NULL);
 }
 
 /* !!!
