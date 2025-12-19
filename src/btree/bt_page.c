@@ -1,7 +1,7 @@
 /*-
  * Copyright (c) 2014-present MongoDB, Inc.
  * Copyright (c) 2008-2014 WiredTiger, Inc.
- *	All rights reserved.
+ *  All rights reserved.
  *
  * See the file LICENSE for redistribution information.
  */
@@ -850,6 +850,8 @@ __inmem_row_int(WT_SESSION_IMPL *session, WT_PAGE *page, size_t *sizep)
         ref = *refp;
         ref->home = page;
         ref->pindex_hint = hint++;
+
+        printf("inmem_row_int, ref %p gets %p as its home\n", ref, page);
 
         switch (unpack.type) {
         case WT_CELL_ADDR_INT:

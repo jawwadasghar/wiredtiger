@@ -170,6 +170,10 @@ __wt_ref_make_visible(WT_SESSION_IMPL *session, WT_REF *ref, bool wont_need) {
 
     if (ref->page != NULL)
         WT_ASSERT(session, ref->page->ref == ref);
+    else {
+        printf("REF->PAGE is NULL !!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+        WT_ASSERT(session, ref->page != NULL);
+    }
 
     if ((current_state = WT_REF_GET_STATE(ref)) != WT_REF_LOCKED) {
         WT_REF_LOCK(session, ref, &previous_state);
@@ -179,6 +183,7 @@ __wt_ref_make_visible(WT_SESSION_IMPL *session, WT_REF *ref, bool wont_need) {
 
     /* Insert into eviction data structures */
     __wt_evict_touch_page(session, ref, false, wont_need);
+    WT_ASSERT(session, __wt_ref_is_root(ref) || ref->page->evict_data.bucket != NULL);
     /*
      * It is absolutely essential that we properly unlock the page here
      * as opposed to just setting its state to memory. Unlocking resets the

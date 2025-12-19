@@ -367,6 +367,7 @@ __split_ref_prepare(
         /* Switch the WT_REF's to their new page. */
         j = 0;
         WT_INTL_FOREACH_BEGIN (session, child, child_ref) {
+            WT_ASSERT(session, !__wt_ref_is_root(child_ref));
             child_ref->home = child;
             child_ref->pindex_hint = j++;
         }
@@ -474,7 +475,7 @@ __split_root(WT_SESSION_IMPL *session, WT_PAGE *root)
         F_SET(ref, WT_REF_FLAG_INTERNAL);
         /* Make the ref visible in cache */
         __wt_ref_make_visible(session, ref, false);
-
+        WT_ASSERT(session, ref->page->evict_data.bucket != NULL);
         /*
          * Initialize the child page. Block eviction in newly created pages and mark them dirty.
          */
@@ -1767,7 +1768,13 @@ __wt_multi_to_ref(WT_SESSION_IMPL *session, WT_PAGE *page, WT_MULTI *multi, WT_R
     if (multi->disk_image!= NULL && !closing) {
         WT_RET(__split_multi_inmem(session, page, multi, ref));
         __wt_ref_make_visible(session, ref, false);
+        WT_ASSERT(session, ref->page->ref == ref);
     }
+    WT_ASSERT(session, __wt_ref_is_root(ref) || ref->page->evict_data.bucket != NULL);
+    printf("__wt_multi_to_ref: ref %p (%s) page %p, bucket is %s\n", ref,
+           __wt_ref_is_root(ref)?"root":"NOT root", ref->page,
+           (ref->page->evict_data.bucket == NULL)?"null":"NOT null");
+    fflush(stdout);
     __wt_free(session, multi->disk_image);
 
     return (0);
@@ -1866,7 +1873,7 @@ __split_insert(WT_SESSION_IMPL *session, WT_REF *ref)
     child = split_ref[1];
     __wt_ref_assign_page(child, right);
     F_SET(child, WT_REF_FLAG_LEAF);
-    __wt_ref_make_visible(session, child, false); /* XXX Check if true is a better option */
+    __wt_ref_make_visible(session, child, false);
     if (type == WT_PAGE_ROW_LEAF) {
         WT_ERR(__wti_row_ikey(
           session, 0, WT_INSERT_KEY(moved_ins), WT_INSERT_KEY_SIZE(moved_ins), child));

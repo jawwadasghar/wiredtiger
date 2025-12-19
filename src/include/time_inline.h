@@ -1,7 +1,7 @@
 /*-
  * Copyright (c) 2014-present MongoDB, Inc.
  * Copyright (c) 2008-2014 WiredTiger, Inc.
- *	All rights reserved.
+ *  All rights reserved.
  *
  * See the file LICENSE for redistribution information.
  */
@@ -108,6 +108,20 @@ __wt_clock(WT_SESSION_IMPL *session)
         return ((uint64_t)(tsp.tv_sec * WT_BILLION + tsp.tv_nsec));
     }
     return (__wt_rdtsc());
+}
+
+/*
+ * __wt_nanoseconds --
+ *     Return the nanoseconds since the Epoch.
+ */
+static WT_INLINE void
+__wt_nanoseconds(WT_SESSION_IMPL *session, uint64_t *nanosecondsp)
+{
+    struct timespec t;
+
+    __wt_epoch(session, &t);
+
+    *nanosecondsp = (uint64_t)(t.tv_sec * WT_BILLION + t.tv_nsec);
 }
 
 /*

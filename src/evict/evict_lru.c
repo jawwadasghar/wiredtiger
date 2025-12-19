@@ -950,6 +950,7 @@ static int
 __evict_get_ref(
   WT_SESSION_IMPL *session, WT_BTREE **btreep, WT_REF **refp, WT_REF_STATE *previous_statep)
 {
+    WT_CACHE *cache;
     WT_CONNECTION_IMPL *conn;
     WT_DECL_RET;
     WT_EVICT *evict;
@@ -965,6 +966,7 @@ __evict_get_ref(
     *btreep = NULL;
     bucketset = NULL;
     conn = S2C(session);
+    cache = conn->cache;
     evict = conn->evict;
     iter = 0;
     min_level = max_level = 0;
@@ -994,6 +996,7 @@ __evict_get_ref(
      * In each bucketset we iterate over the buckets starting with the smallest, because smaller
      * buckets will have pages with smaller read generations.
      */
+#if 1
     if (F_ISSET(evict, WT_EVICT_CACHE_CLEAN))
         max_level = WT_EVICT_LEVEL_CLEAN_LEAF;
     if (F_ISSET(evict, WT_EVICT_CACHE_DIRTY) || F_ISSET(evict, WT_EVICT_CACHE_UPDATES))
@@ -1001,7 +1004,8 @@ __evict_get_ref(
 
     if (!F_ISSET(evict, WT_EVICT_CACHE_CLEAN) && !F_ISSET(evict, WT_EVICT_CACHE_UPDATES))
         min_level = WT_EVICT_LEVEL_DIRTY_LEAF;
-
+#endif
+    max_level = WT_EVICT_LEVEL_DIRTY_INTERNAL;
     printf("enter evict_get_ref, min_level = %d, max_level = %d\n", (int)min_level, (int)max_level);
 
     for (i = 0; i < WT_EVICT_LEVELS; i++) {
@@ -1009,7 +1013,9 @@ __evict_get_ref(
         printf("level [%d]: %" PRIu64 " items\n",
                (int)i, evict->evict_bucketset[i].bucketset_num_items);
     }
-    printf("Total items:  %" PRIu64 "\n", total_items);
+    printf("Total pages:  %" PRIu64 ", %" PRIu64 " dirty bytes, %" PRIu64 " update bytes, %" PRIu64 " total pages,  %" PRIu64 " total bytes images\n",
+           total_items, __wt_cache_dirty_inuse(cache), __wt_cache_bytes_updates(cache),
+           __wt_cache_pages_inuse(cache), __wt_cache_bytes_image(cache));
 
     for (i = min_level; i <= max_level; i++) {
         if (!F_ISSET(conn->evict, WT_EVICT_CACHE_ANY))
@@ -1039,6 +1045,11 @@ __evict_get_ref(
                     break;
                 ref = page->ref;
                 WT_ASSERT(session, ref != NULL);
+                if (__wt_ref_is_root(ref)) {
+                    printf("FOUND ROOT in __evict_get_ref\n");
+                    ref = NULL;
+                    continue;
+                }
 
                 /* Try to lock the reference. If it's already locked, skip it. */
                 previous_state =  WT_REF_GET_STATE(ref);
@@ -1678,7 +1689,13 @@ __wt_evict_enqueue_page(WT_SESSION_IMPL *session, WT_REF *ref)
     if (__wt_ref_is_root(ref))
         return;
 
-    WT_ASSERT(session, previous_state == WT_REF_LOCKED || previous_state == WT_REF_MEM);
+    /*
+     * If the page isn't valid there is no need to put it into eviction data structures.
+     * We can get here if the page is about to be discarded, but it is set clean before
+     * being deallocated.
+     */
+    if (previous_state != WT_REF_LOCKED && previous_state != WT_REF_MEM)
+        return;
     /*
      * Lock the page so it doesn't disappear. We aren't evicting the page, so we don't need to check
      * for hazard pointers.
@@ -1755,7 +1772,7 @@ __wt_evict_touch_page(WT_SESSION_IMPL *session, WT_REF *ref, bool internal_only,
 
     page = ref->page;
 
-    WT_ASSERT(session, ref->page != NULL);
+    WT_ASSERT(session, page != NULL);
 
     /* Is this the first use of the page? */
     if (__wt_atomic_load64(&page->evict_data.read_gen) == WT_READGEN_NOTSET) {
@@ -1769,6 +1786,7 @@ __wt_evict_touch_page(WT_SESSION_IMPL *session, WT_REF *ref, bool internal_only,
         if (bumped || page->evict_data.bucket == NULL)
             __wt_evict_enqueue_page(session, ref);
     }
+    WT_ASSERT(session, __wt_ref_is_root(ref) || page->evict_data.bucket != NULL);
 }
 
 /* !!!
@@ -1826,6 +1844,8 @@ __wt_evict_page_first_dirty(WT_SESSION_IMPL *session, WT_PAGE *page)
     if (page->ref != NULL) {
         __wt_evict_enqueue_page(session, page->ref);
     }
+    else
+        printf("In evict_page_first_dirty, ref is NULL. NOT ENQUEUEING\n");
 }
 
 /* !!!
@@ -1919,7 +1939,7 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
     WT_CONNECTION_IMPL *conn;
     WT_EVICT *evict;
     WT_PAGE *page;
-    bool modified , want_page;
+    bool modified, want_page;
 
     btree = S2BT(session);
     conn = S2C(session);
@@ -1954,7 +1974,7 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
     if (!F_ISSET(evict, WT_EVICT_CACHE_CLEAN) && !F_ISSET(evict, WT_EVICT_CACHE_DIRTY) &&
         !F_ISSET(evict, WT_EVICT_CACHE_UPDATES))
         WT_STAT_CONN_INCR(session, eviction_target_strategy_none);
-
+#if 1
     want_page = (F_ISSET(evict, WT_EVICT_CACHE_CLEAN) && !modified) ||
       (F_ISSET(evict, WT_EVICT_CACHE_DIRTY) && modified) ||
         (F_ISSET(evict, WT_EVICT_CACHE_UPDATES) && page->modify != NULL);
@@ -1966,7 +1986,7 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
                F_ISSET(evict, WT_EVICT_CACHE_UPDATES), modified, page->modify);
         return (true);
     }
-
+#endif
     /*
      * Do not evict a clean metadata page that contains historical data needed to satisfy a reader.
      * Since there is no history store for metadata, we won't be able to serve an older reader if we
@@ -1989,14 +2009,14 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
         printf("skipping internal page with active children\n");
         return (true);
     }
-
+#if 0
     /* Evaluate dirty page candidacy, when eviction is not aggressive. */
     if (!__wt_evict_aggressive(session) && modified && __evict_skip_dirty_candidate(session, page)) {
         WT_STAT_CONN_INCR(session, eviction_skip_page_dirty_not_aggressive);
         printf("skipping because of __evict_skip_dirty_candidate\n");
         return (true);
     }
-
+#endif
     /* If the page can't be evicted, give up. */
     if (!__wt_page_can_evict(session, ref, NULL)) {
         WT_STAT_CONN_INCR(session, eviction_skip_page_cannot_evict);
