@@ -188,7 +188,7 @@ __wt_evict(WT_SESSION_IMPL *session, WT_REF *ref, WT_REF_STATE previous_state, u
     case WT_EVICT_LEVEL_DIRTY_INTERNAL:
         WT_STAT_CONN_INCR(session, eviction_target_bucket_dirty_internal);
         break;
-    default:
+    default: /* XXX -- Fix this */
         printf("Invalid bucket %d\n", bucketset_level);
     }
 

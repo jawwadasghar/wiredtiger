@@ -984,6 +984,11 @@ __evict_get_ref(
     if (!F_ISSET(evict, WT_EVICT_CACHE_ANY))
         goto done;
 
+    if (!F_ISSET(evict, WT_EVICT_CACHE_CLEAN) && !F_ISSET(evict, WT_EVICT_CACHE_DIRTY)) {
+        if (F_ISSET(evict, WT_EVICT_CACHE_UPDATES))
+            WT_STAT_CONN_INCR(session, eviction_target_strategy_updates_only);
+    }
+
     /*
      * We iterate over bucket sets in eviction priority order from highest to lowest is:
      * 1. Clean leaf pages.
@@ -999,13 +1004,24 @@ __evict_get_ref(
 #if 1
     if (F_ISSET(evict, WT_EVICT_CACHE_CLEAN))
         max_level = WT_EVICT_LEVEL_CLEAN_LEAF;
-    if (F_ISSET(evict, WT_EVICT_CACHE_DIRTY) || F_ISSET(evict, WT_EVICT_CACHE_UPDATES))
+    if (F_ISSET(evict, WT_EVICT_CACHE_DIRTY))
         max_level = WT_EVICT_LEVEL_DIRTY_INTERNAL;
+    if (F_ISSET(evict, WT_EVICT_CACHE_UPDATES))
+        max_level = WT_EVICT_LEVEL_DIRTY_UPDATES;
 
-    if (!F_ISSET(evict, WT_EVICT_CACHE_CLEAN) && !F_ISSET(evict, WT_EVICT_CACHE_UPDATES))
+    if (!F_ISSET(evict, WT_EVICT_CACHE_CLEAN))
         min_level = WT_EVICT_LEVEL_DIRTY_LEAF;
+    if (!F_ISSET(evict, WT_EVICT_CACHE_DIRTY) && !F_ISSET(evict, WT_EVICT_CACHE_CLEAN))
+        min_level = WT_EVICT_LEVEL_CLEAN_UPDATES;
 #endif
-    max_level = WT_EVICT_LEVEL_DIRTY_INTERNAL;
+
+    /* Only evict from all levels, including clean internal pages, if this is urgent */
+    if (F_ISSET(evict, WT_EVICT_CACHE_URGENT)) {
+        min_level = 0;
+        max_level = WT_EVICT_LEVELS - 1;
+        printf("URGENT EVICTION!!!!!!!!!!!!\n");
+    }
+
     printf("enter evict_get_ref, min_level = %d, max_level = %d\n", (int)min_level, (int)max_level);
 
     for (i = 0; i < WT_EVICT_LEVELS; i++) {
@@ -1721,10 +1737,18 @@ __wt_evict_enqueue_page(WT_SESSION_IMPL *session, WT_REF *ref)
         page->evict_data.dhandle = session->dhandle;
 
     correct_bucketset = __evict_page_get_bucketset(session, page, &bucketset);
-
+#if 0
+    if (__wt_evict_get_bucketset_level(session, page) == WT_EVICT_LEVEL_CLEAN_UPDATES ||
+        __wt_evict_get_bucketset_level(session, page) == WT_EVICT_LEVEL_DIRTY_UPDATES) {
+           printf("UPDATES ref %p, page %p, modify: %p, level %d\n", page->ref, page, page->modify,
+               __wt_evict_get_bucketset_level(session, page));
+    }
+#endif
     /* If the page is already in a bucketset, is this the right one? */
-    if (correct_bucketset && !__evict_needs_new_bucket(session, page, NULL))
+    if (correct_bucketset && !__evict_needs_new_bucket(session, page, NULL)) {
+        //  printf("Not enqueueing\n");
         goto done;
+    }
     else
         __wt_evict_remove(session, ref, false);
 
@@ -1820,16 +1844,6 @@ __evict_read_gen_new(WT_SESSION_IMPL *session, WT_PAGE *page)
     WT_IGNORE_RET(__wti_evict_read_gen_bump(session, page));
 }
 
-/* !!!
- * __wt_evict_page_first_dirty --
- *     Update a page's eviction state (read generation) when a page transitions from clean to
- *     dirty.
- *
- *     It is called every time a page transitions from clean to dirty for the first time in memory.
- *
- *     Input parameter:
- *       `page`: The page whose eviction state is being updated.
- */
 void
 __wt_evict_page_first_dirty(WT_SESSION_IMPL *session, WT_PAGE *page)
 {
@@ -1841,11 +1855,8 @@ __wt_evict_page_first_dirty(WT_SESSION_IMPL *session, WT_PAGE *page)
         __evict_read_gen_new(session, page);
 
     /* Move the page to the right bucketset */
-    if (page->ref != NULL) {
+    if (page->ref != NULL)
         __wt_evict_enqueue_page(session, page->ref);
-    }
-    else
-        printf("In evict_page_first_dirty, ref is NULL. NOT ENQUEUEING\n");
 }
 
 /* !!!
@@ -1939,7 +1950,7 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
     WT_CONNECTION_IMPL *conn;
     WT_EVICT *evict;
     WT_PAGE *page;
-    bool modified, want_page;
+    bool modified;
 
     btree = S2BT(session);
     conn = S2C(session);
@@ -1966,27 +1977,6 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
     if (__wt_atomic_load64(&page->evict_data.read_gen) == WT_READGEN_NOTSET)
         __wt_evict_touch_page(session, ref, false, false);
 
-    if (!F_ISSET(evict, WT_EVICT_CACHE_CLEAN) && !F_ISSET(evict, WT_EVICT_CACHE_DIRTY)) {
-        if (F_ISSET(evict, WT_EVICT_CACHE_UPDATES))
-            WT_STAT_CONN_INCR(session, eviction_target_strategy_updates_only);
-    }
-
-    if (!F_ISSET(evict, WT_EVICT_CACHE_CLEAN) && !F_ISSET(evict, WT_EVICT_CACHE_DIRTY) &&
-        !F_ISSET(evict, WT_EVICT_CACHE_UPDATES))
-        WT_STAT_CONN_INCR(session, eviction_target_strategy_none);
-#if 1
-    want_page = (F_ISSET(evict, WT_EVICT_CACHE_CLEAN) && !modified) ||
-      (F_ISSET(evict, WT_EVICT_CACHE_DIRTY) && modified) ||
-        (F_ISSET(evict, WT_EVICT_CACHE_UPDATES) && page->modify != NULL);
-
-    if (!want_page) {
-        WT_STAT_CONN_INCR(session, eviction_skip_unwanted_pages);
-        printf("skipping page: evict flags %d, EVICT_CLEAN: %d, EVICT DIRTY: %d, EVICT UPDATES: %d, modified: %d, page->modify: %p\n",
-               (int)evict->flags, F_ISSET(evict, WT_EVICT_CACHE_CLEAN), F_ISSET(evict, WT_EVICT_CACHE_DIRTY),
-               F_ISSET(evict, WT_EVICT_CACHE_UPDATES), modified, page->modify);
-        return (true);
-    }
-#endif
     /*
      * Do not evict a clean metadata page that contains historical data needed to satisfy a reader.
      * Since there is no history store for metadata, we won't be able to serve an older reader if we
@@ -2009,14 +1999,14 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
         printf("skipping internal page with active children\n");
         return (true);
     }
-#if 0
+
     /* Evaluate dirty page candidacy, when eviction is not aggressive. */
     if (!__wt_evict_aggressive(session) && modified && __evict_skip_dirty_candidate(session, page)) {
         WT_STAT_CONN_INCR(session, eviction_skip_page_dirty_not_aggressive);
         printf("skipping because of __evict_skip_dirty_candidate\n");
         return (true);
     }
-#endif
+
     /* If the page can't be evicted, give up. */
     if (!__wt_page_can_evict(session, ref, NULL)) {
         WT_STAT_CONN_INCR(session, eviction_skip_page_cannot_evict);

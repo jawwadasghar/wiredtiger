@@ -134,14 +134,18 @@ __wt_evict_get_bucketset_level(WT_SESSION_IMPL *session, WT_PAGE *page)
         else
             return WT_EVICT_LEVEL_WONT_NEED_INTERNAL;
     }
-    else if (!WT_PAGE_IS_INTERNAL(page) && !__wt_page_is_modified(page))
+    else if (!WT_PAGE_IS_INTERNAL(page) && !__wt_page_is_modified(page) && page->modify == NULL)
         return WT_EVICT_LEVEL_CLEAN_LEAF;
-    else if (WT_PAGE_IS_INTERNAL(page) && !__wt_page_is_modified(page))
-        return WT_EVICT_LEVEL_CLEAN_INTERNAL;
-    else if (!WT_PAGE_IS_INTERNAL(page) && __wt_page_is_modified(page))
+    else if (WT_PAGE_IS_INTERNAL(page) && !__wt_page_is_modified(page) && page->modify == NULL)
+    return WT_EVICT_LEVEL_CLEAN_INTERNAL;
+    else if (!WT_PAGE_IS_INTERNAL(page) && __wt_page_is_modified(page) && page->modify == NULL)
         return WT_EVICT_LEVEL_DIRTY_LEAF;
-    else if (WT_PAGE_IS_INTERNAL(page) && __wt_page_is_modified(page))
+    else if (WT_PAGE_IS_INTERNAL(page) && __wt_page_is_modified(page) && page->modify == NULL)
         return WT_EVICT_LEVEL_DIRTY_INTERNAL;
+    else if (!__wt_page_is_modified(page) && page->modify != NULL)
+        return WT_EVICT_LEVEL_CLEAN_UPDATES;
+    else if (__wt_page_is_modified(page) && page->modify != NULL)
+        return WT_EVICT_LEVEL_DIRTY_UPDATES;
 
      /*
       * If we are here, we couldn't determine the bucketset level for a page
@@ -208,8 +212,9 @@ __evict_needs_new_bucket(WT_SESSION_IMPL *session, WT_PAGE *page, uint64_t *ret_
     read_gen = __wt_atomic_load64(&page->evict_data.read_gen);
     cur_bucket_id = __wt_atomic_load64(&page->evict_data.bucket->id);
 
-    if (__evict_page_get_bucketset(session, page, &bucketset) == false)
+    if (__evict_page_get_bucketset(session, page, &bucketset) == false) {
         return true;
+    }
 
     if (read_gen == WT_READGEN_WONT_NEED || read_gen == WT_READGEN_EVICT_SOON)
         return false;
@@ -352,6 +357,10 @@ __wt_evict_page_init(WT_PAGE *page, uint64_t evict_pass_gen)
  *     Initialize the read generation on the new page using the read generation of the original
  *     page, unless this was a forced eviction, in which case we leave the new page with the
  *     default initialization.
+ *
+ *     Insert the new page in the same bucket as the original page. The new page may not have its
+ *     home set after it inherits state, so eviction code will think it's a root page and won't
+ *     insert it into the bucket. So we do this here.
  *
  *     It is called when creating a new page from an existing page, for example during split.
  *

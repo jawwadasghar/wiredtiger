@@ -660,8 +660,6 @@ __wt_page_only_modify_set(WT_SESSION_IMPL *session, WT_PAGE *page)
       __wt_atomic_add32(&page->modify->page_state, 1) == WT_PAGE_DIRTY_FIRST) {
         __wt_cache_dirty_incr(session, page);
 
-        __wt_evict_page_first_dirty(session, page);
-
         /*
          * We won the race to dirty the page, but another thread could have committed in the
          * meantime, and the last_running field been updated past it. That is all very unlikely, but
@@ -679,6 +677,9 @@ __wt_page_only_modify_set(WT_SESSION_IMPL *session, WT_PAGE *page)
     /* Check if this is the largest transaction ID to update the page. */
     if (WT_TXNID_LT(__wt_atomic_load64(&page->modify->update_txn), session->txn->id))
         __wt_atomic_store64(&page->modify->update_txn, session->txn->id);
+
+    /* Call this anytime page is dirtied or modified */
+    __wt_evict_page_first_dirty(session, page);
 }
 
 /*
