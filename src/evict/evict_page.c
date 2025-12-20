@@ -189,12 +189,8 @@ __wt_evict(WT_SESSION_IMPL *session, WT_REF *ref, WT_REF_STATE previous_state, u
         WT_STAT_CONN_INCR(session, eviction_target_bucket_dirty_internal);
         break;
     default: /* XXX -- Fix this */
-        printf("Invalid bucket %d\n", bucketset_level);
+        ;//printf("Invalid bucket %d\n", bucketset_level);
     }
-
-    printf("Session %d in __wt_evict, for page %p, bucketset %d, bucket id %d\n",
-           (int)session->id, page, (int)bucketset_level,
-           (page->evict_data.bucket==NULL)?-1:(int)page->evict_data.bucket->id);
 
     if (!WT_EVICT_PAGE_CLEARED(page))
         __wt_evict_remove(session, ref, false);
@@ -266,8 +262,6 @@ __wt_evict(WT_SESSION_IMPL *session, WT_REF *ref, WT_REF_STATE previous_state, u
     /* Reconcile the page unless it is from a dead tree or it is clean. */
     if (!tree_dead && __wt_page_is_modified(page))  {
         WT_ERR_FUNC("evict_reconcile", __evict_reconcile(session, ref, flags));
-        printf("Reconciled page %p, bucket = %p, SCRUB flag %s\n", (void*)ref->page,(void*)ref->page->evict_data.bucket,
-               F_ISSET(conn->evict, WT_EVICT_CACHE_SCRUB)?"set":"unset");
     }
 
     /* After this spot, the only recoverable failure is EBUSY. */
@@ -325,9 +319,6 @@ err:
             __wt_atomic_storebool(&ref->page->evict_data.evict_skip, true);
 
             if (WT_EVICT_PAGE_CLEARED(page)) {
-                printf("EVICTION FAILED ON page %p by session %d. Current bucket is %p PUT BACK, previous state is %d\n",
-                       (void*)ref->page, (int)session->id, (void*)ref->page->evict_data.bucket, previous_state);
-
                 /* Put the page back into the list it belongs */
                 __wt_evict_enqueue_page(session, ref);
             }
@@ -342,8 +333,6 @@ done:
     if (ret == 0)
         FLD_SET(stats_flags, WT_EVICT_STATS_SUCCESS);
     __evict_stats_update(session, stats_flags);
-
-    printf("Session %d (%s) done __wt_evict: page %p\n", (int)session->id, session->name, ref->page);
 
     /* Leave any local eviction generation. */
     WT_LEAVE_GENERATION(session, WT_GEN_SPLIT);
@@ -434,8 +423,6 @@ __evict_page_clean_update(WT_SESSION_IMPL *session, WT_REF *ref, uint32_t flags)
         instantiated = false;
     }
 
-    printf("Page %p is in __evict_page_clean_update, to be discarded\n", (void*)ref->page);
-
     /*
      * Discard the page and update the reference structure. A leaf page without a disk address is a
      * deleted page that either was created empty and never written out, or had its on-disk page
@@ -475,9 +462,6 @@ __evict_page_dirty_update(WT_SESSION_IMPL *session, WT_REF *ref, uint32_t evict_
     closing = FLD_ISSET(evict_flags, WT_EVICT_CALL_CLOSING);
 
     WT_ASSERT(session, ref->addr == NULL);
-
-    printf("in__evict_page_dirty_update, page = %p, bucket = %p\n",
-           ref->page,            ref->page->evict_data.bucket);
 
     switch (mod->rec_result) {
     case WT_PM_REC_EMPTY:
@@ -544,8 +528,6 @@ __evict_page_dirty_update(WT_SESSION_IMPL *session, WT_REF *ref, uint32_t evict_
                 mod->mod_disk_image = tmp;
                 return (ret);
             }
-            printf("In __evict_page_dirty_update, WT_PM_REC_REPLACE: after __wt_split_rewrite page = %p, bucket = %p\n",
-                   ref->page, ref->page->evict_data.bucket);
         }
 
         break;
@@ -1041,11 +1023,6 @@ __evict_reconcile(WT_SESSION_IMPL *session, WT_REF *ref, uint32_t evict_flags)
           session, WT_ISO_READ_COMMITTED, ret = __wt_reconcile(session, ref, NULL, flags));
     else
         ret = __wt_reconcile(session, ref, NULL, flags);
-
-    printf("Reconciled page %p, bucket is %p, WT_REC_EVICT is %s, WT_REC_SCRUB is %s\n",
-           (void*)ref->page, (void*)ref->page->evict_data.bucket,
-           LF_ISSET(WT_REC_EVICT)?"set":"NOT set",
-           LF_ISSET(WT_REC_SCRUB)?"set":"NOT set");
 
     if (ret != 0)
         WT_STAT_CONN_INCR(session, eviction_fail_in_reconciliation);

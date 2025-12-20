@@ -40,7 +40,6 @@ __wt_ref_out(WT_SESSION_IMPL *session, WT_REF *ref)
         F_ISSET(session->dhandle, WT_DHANDLE_DEAD | WT_DHANDLE_EXCLUSIVE) ||
         !__wt_gen_active(session, WT_GEN_SPLIT, ref->page->pg_intl_split_gen));
 
-    printf("Destroying page %p\n", ref->page);
     __wt_evict_remove(session, ref, true /* destroying the page */);
     __wt_page_out(session, &ref->page);
 }

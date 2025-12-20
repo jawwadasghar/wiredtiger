@@ -2414,10 +2414,7 @@ __rec_write_wrapup(WT_SESSION_IMPL *session, WT_RECONCILE *r, WT_PAGE *page)
     WT_REF_STATE previous_ref_state;
     WT_TIME_AGGREGATE stop_ta, *stop_tap, ta;
     uint32_t i;
-    int bucketset_level, bucket_id;
 
-    bucket_id = -1;
-    bucketset_level = -1;
     btree = S2BT(session);
     bm = btree->bm;
     mod = page->modify;
@@ -2633,13 +2630,6 @@ split:
         WT_TIME_AGGREGATE_COPY(stop_tap, &stop_ta);
         WT_RELEASE_WRITE_WITH_BARRIER(mod->stop_ta, stop_tap);
     }
-
-    if (page->evict_data.bucket != NULL) {
-        bucketset_level = __wt_evict_get_bucketset_level(session, page);
-        bucket_id = page->evict_data.bucket->id;
-    }
-    printf("Page %p in reconciliation wrapup. Bucket = %p, bucketset %d, id %d\n",
-           (void*)page, (void*)page->evict_data.bucket, bucketset_level, bucket_id);
 
     return (0);
 }
