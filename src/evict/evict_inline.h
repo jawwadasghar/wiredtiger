@@ -142,10 +142,8 @@ __wt_evict_get_bucketset_level(WT_SESSION_IMPL *session, WT_PAGE *page)
         return WT_EVICT_LEVEL_DIRTY_LEAF;
     else if (WT_PAGE_IS_INTERNAL(page) && __wt_page_is_modified(page) && page->modify == NULL)
         return WT_EVICT_LEVEL_DIRTY_INTERNAL;
-    else if (!__wt_page_is_modified(page) && page->modify != NULL)
-        return WT_EVICT_LEVEL_CLEAN_UPDATES;
-    else if (__wt_page_is_modified(page) && page->modify != NULL)
-        return WT_EVICT_LEVEL_DIRTY_UPDATES;
+    else if (page->modify != NULL)
+        return WT_EVICT_LEVEL_UPDATES;
 
      /*
       * If we are here, we couldn't determine the bucketset level for a page

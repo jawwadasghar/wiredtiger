@@ -937,6 +937,29 @@ __evict_skip_dirty_candidate(WT_SESSION_IMPL *session, WT_PAGE *page)
     return (false);
 }
 
+#if 0
+static const char *WT_EVICT_LEVEL_NAMES[] = {
+    "WT_EVICT_LEVEL_WONT_NEED_LEAF",
+    "WT_EVICT_LEVEL_CLEAN_LEAF",
+    "WT_EVICT_LEVEL_DIRTY_LEAF",
+    "WT_EVICT_LEVEL_WONT_NEED_INTERNAL",
+    "WT_EVICT_LEVEL_DIRTY_INTERNAL",
+    "WT_EVICT_LEVEL_UPDATES",
+    "WT_EVICT_LEVEL_CLEAN_INTERNAL"
+};
+
+
+static const char*
+__evict_level_to_string(uint32_t level) {
+
+    if (level < (int)(sizeof(WT_EVICT_LEVEL_NAMES) / sizeof(WT_EVICT_LEVEL_NAMES[0])))
+        return WT_EVICT_LEVEL_NAMES[level];
+    else
+        return "UNKNOWN_WT_EVICT_LEVEL";
+}
+
+#endif
+
 /*
  * __evict_get_ref --
  *     Get a page for eviction. The returned page is locked. It will be unlocked by the function
@@ -948,7 +971,7 @@ static int
 __evict_get_ref(
   WT_SESSION_IMPL *session, WT_BTREE **btreep, WT_REF **refp, WT_REF_STATE *previous_statep)
 {
-//    WT_CACHE *cache;
+    //  WT_CACHE *cache;
     WT_CONNECTION_IMPL *conn;
     WT_DECL_RET;
     WT_EVICT *evict;
@@ -958,15 +981,15 @@ __evict_get_ref(
     WT_PAGE *page;
     WT_REF *ref;
     WT_REF_STATE previous_state;
-    uint32_t i, iter, j, min_level, max_level, num_buckets;
-//    uint64_t total_items;
+    uint32_t i, iter, j, min_level, max_level, num_buckets, total_iter;
+    // uint64_t total_items;
 
     *btreep = NULL;
     bucketset = NULL;
     conn = S2C(session);
-    //  cache = conn->cache;
+//    cache = conn->cache;
     evict = conn->evict;
-    iter = 0;
+    iter = total_iter = 0;
     min_level = max_level = 0;
     num_buckets = evict->evict_num_buckets;
     previous_state = 0;
@@ -1005,12 +1028,12 @@ __evict_get_ref(
     if (F_ISSET(evict, WT_EVICT_CACHE_DIRTY))
         max_level = WT_EVICT_LEVEL_DIRTY_INTERNAL;
     if (F_ISSET(evict, WT_EVICT_CACHE_UPDATES))
-        max_level = WT_EVICT_LEVEL_DIRTY_UPDATES;
+        max_level = WT_EVICT_LEVEL_UPDATES;
 
     if (!F_ISSET(evict, WT_EVICT_CACHE_CLEAN))
         min_level = WT_EVICT_LEVEL_DIRTY_LEAF;
     if (!F_ISSET(evict, WT_EVICT_CACHE_DIRTY) && !F_ISSET(evict, WT_EVICT_CACHE_CLEAN))
-        min_level = WT_EVICT_LEVEL_CLEAN_UPDATES;
+        min_level = WT_EVICT_LEVEL_UPDATES;
 #endif
 
     /* Only evict from all levels, including clean internal pages, if this is urgent */
@@ -1021,12 +1044,13 @@ __evict_get_ref(
     }
 
 #if 0
-    printf("enter evict_get_ref, min_level = %d, max_level = %d\n", (int)min_level, (int)max_level);
+    printf("enter evict_get_ref, min_level = %s, max_level = %s\n",
+           __evict_level_to_string(min_level), __evict_level_to_string(max_level));
 
     for (i = 0; i < WT_EVICT_LEVELS; i++) {
         total_items += evict->evict_bucketset[i].bucketset_num_items;
-        printf("level [%d]: %" PRIu64 " items\n",
-               (int)i, evict->evict_bucketset[i].bucketset_num_items);
+        printf("level [%s]: %" PRIu64 " items\n",
+               __evict_level_to_string(i), evict->evict_bucketset[i].bucketset_num_items);
     }
     printf("Total pages:  %" PRIu64 ", %" PRIu64 " dirty bytes, %" PRIu64 " update bytes, %" PRIu64 " total pages,  %" PRIu64 " total bytes images\n",
            total_items, __wt_cache_dirty_inuse(cache), __wt_cache_bytes_updates(cache),
@@ -1039,7 +1063,7 @@ __evict_get_ref(
         if (bucketset->bucketset_num_items == 0)
             continue;
         for (j = __wt_atomic_load32(&bucketset->bucket_last_considered) % num_buckets, iter = 0;
-             iter++ < num_buckets; j = (j+1) % num_buckets) {
+             iter++ < num_buckets; j = (j+1) % num_buckets, total_iter++) {
 
             if (!F_ISSET(conn->evict, WT_EVICT_CACHE_ANY))
                 break;
@@ -1151,7 +1175,9 @@ done:
          */
         (void)__wt_atomic_addv32(&((*btreep)->evict_data.evict_busy), 1);
         (void)__wt_atomic_subi32(&page->evict_data.dhandle->session_inuse, 1);
+//        printf("Found ref in %d iterations\n", (int)total_iter);
     } else {
+        printf("REF EMPTY\n");
         WT_STAT_CONN_INCR(session, eviction_get_ref_empty);
     }
 
