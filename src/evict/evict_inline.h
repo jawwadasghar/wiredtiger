@@ -115,8 +115,10 @@ __evict_destination_bucket(WT_SESSION_IMPL *session, uint64_t read_gen)
     if (read_gen == WT_READGEN_WONT_NEED || read_gen == WT_READGEN_EVICT_SOON) {
         return (uint64_t)__wt_random(&session->rnd) % num_buckets;
     }
-    return (__evict_base_bucket(session, read_gen) + session->id % WT_EVICT_EXPECTED_CONTENTION)
-        % num_buckets;
+//    return (__evict_base_bucket(session, read_gen) + session->id % WT_EVICT_EXPECTED_CONTENTION)
+//        % num_buckets;
+    return (__evict_base_bucket(session, read_gen) +
+            __wt_random(&session->rnd) % WT_EVICT_EXPECTED_CONTENTION) % num_buckets;
 }
 
 /*

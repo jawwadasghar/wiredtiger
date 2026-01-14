@@ -1177,7 +1177,6 @@ done:
         (void)__wt_atomic_subi32(&page->evict_data.dhandle->session_inuse, 1);
 //        printf("Found ref in %d iterations\n", (int)total_iter);
     } else {
-        printf("REF EMPTY\n");
         WT_STAT_CONN_INCR(session, eviction_get_ref_empty);
     }
 
@@ -1781,6 +1780,11 @@ __wt_evict_enqueue_page(WT_SESSION_IMPL *session, WT_REF *ref)
     __wt_atomic_addv64(&bucketset->bucketset_num_items, 1);
 
     WT_STAT_CONN_INCR(session, eviction_enqueued_page);
+#if 0
+    printf("Page at level %s, bucket %d\n",
+           __evict_level_to_string((uint32_t)__wt_evict_get_bucketset_level(session, page)),
+           (int)dst_bucket);
+#endif
 done:
     if (must_unlock_ref)
         WT_REF_UNLOCK(ref, previous_state);
