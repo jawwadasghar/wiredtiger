@@ -1718,9 +1718,7 @@ __wt_evict_enqueue_page(WT_SESSION_IMPL *session, WT_REF *ref)
     WT_REF_STATE previous_state;
     bool correct_bucketset, must_unlock_ref;
     uint64_t dst_bucket, read_gen;
-    static int times;
 
-    (void) times;
     page = ref->page;
     previous_state = WT_REF_GET_STATE(ref);
 
@@ -1882,7 +1880,7 @@ void
 __wt_evict_page_set_clean(WT_SESSION_IMPL *session, WT_PAGE *page)
 {
     /* Move the page to the right bucketset */
-    if (page->ref != NULL && page->evict_data.dhandle != NULL) {
+    if (!page->evict_data.destroying && page->ref != NULL && page->evict_data.dhandle != NULL) {
         __wt_evict_enqueue_page(session, page->ref);
         WT_STAT_CONN_INCR(session, eviction_pages_set_clean);
     }
