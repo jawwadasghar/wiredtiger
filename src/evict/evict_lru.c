@@ -1719,6 +1719,7 @@ __wt_evict_enqueue_page(WT_SESSION_IMPL *session, WT_REF *ref)
     bool correct_bucketset, must_unlock_ref;
     uint64_t dst_bucket, read_gen;
 
+    WT_ASSERT(session, ref != NULL);
     page = ref->page;
     previous_state = WT_REF_GET_STATE(ref);
 
