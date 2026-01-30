@@ -851,8 +851,6 @@ __inmem_row_int(WT_SESSION_IMPL *session, WT_PAGE *page, size_t *sizep)
         ref->home = page;
         ref->pindex_hint = hint++;
 
-        printf("inmem_row_int, ref %p gets %p as its home\n", ref, page);
-
         switch (unpack.type) {
         case WT_CELL_ADDR_INT:
             F_SET(ref, WT_REF_FLAG_INTERNAL);

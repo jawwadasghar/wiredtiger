@@ -982,7 +982,7 @@ __evict_get_ref(
     WT_REF *ref;
     WT_REF_STATE previous_state;
     uint32_t i, iter, j, min_level, max_level, num_buckets, total_iter;
-    // uint64_t total_items;
+    //uint64_t total_items;
 
     *btreep = NULL;
     bucketset = NULL;
@@ -1049,8 +1049,9 @@ __evict_get_ref(
 
     for (i = 0; i < WT_EVICT_LEVELS; i++) {
         total_items += evict->evict_bucketset[i].bucketset_num_items;
-        printf("level [%s]: %" PRIu64 " items\n",
-               __evict_level_to_string(i), evict->evict_bucketset[i].bucketset_num_items);
+        printf("level [%s]: %" PRIu64 " items. (%p)\n",
+               __evict_level_to_string(i), evict->evict_bucketset[i].bucketset_num_items,
+               &evict->evict_bucketset[i]);
     }
     printf("Total pages:  %" PRIu64 ", %" PRIu64 " dirty bytes, %" PRIu64 " update bytes, %" PRIu64 " total pages,  %" PRIu64 " total bytes images\n",
            total_items, __wt_cache_dirty_inuse(cache), __wt_cache_bytes_updates(cache),
@@ -1712,6 +1713,7 @@ __wt_evict_remove(WT_SESSION_IMPL *session, WT_REF *ref, bool destroying)
 void
 __wt_evict_enqueue_page(WT_SESSION_IMPL *session, WT_REF *ref)
 {
+    WT_EVICT *evict;
     WT_EVICT_BUCKET *bucket;
     WT_EVICT_BUCKETSET *bucketset;
     WT_PAGE *page;
@@ -1720,6 +1722,7 @@ __wt_evict_enqueue_page(WT_SESSION_IMPL *session, WT_REF *ref)
     uint64_t dst_bucket, read_gen;
 
     WT_ASSERT(session, ref != NULL);
+    evict = S2C(session)->evict; 
     page = ref->page;
     previous_state = WT_REF_GET_STATE(ref);
 
@@ -1754,6 +1757,7 @@ __wt_evict_enqueue_page(WT_SESSION_IMPL *session, WT_REF *ref)
         page->evict_data.dhandle = session->dhandle;
 
     correct_bucketset = __evict_page_get_bucketset(session, page, &bucketset);
+    //printf("Got %s bucketset %p for page %p\n", correct_bucketset?"RIGHT":"WRONG", bucketset, page);
 
     /* If the page is already in a bucketset, is this the right one? */
     if (correct_bucketset && !__evict_needs_new_bucket(session, page, NULL))
@@ -1761,6 +1765,8 @@ __wt_evict_enqueue_page(WT_SESSION_IMPL *session, WT_REF *ref)
     else
         __wt_evict_remove(session, ref, false);
 
+    /* Get the right bucketset */
+    bucketset = &evict->evict_bucketset[__wt_evict_get_bucketset_level(session, page)];
     /*
      * Find the right bucket. The page's read generation may change as we are looking for the right
      * bucket. In that case, the page will end up in a lower bucket than. it should be. That's okay,
@@ -1780,9 +1786,9 @@ __wt_evict_enqueue_page(WT_SESSION_IMPL *session, WT_REF *ref)
 
     WT_STAT_CONN_INCR(session, eviction_enqueued_page);
 #if 0
-    printf("Page at level %s, bucket %d\n",
-           __evict_level_to_string((uint32_t)__wt_evict_get_bucketset_level(session, page)),
-           (int)dst_bucket);
+    printf("Page %p enqueued at level %d, bucket %d, bucketset %p\n", page,
+           (int)__wt_evict_get_bucketset_level(session, page),
+           (int)dst_bucket, bucketset);
 #endif
 done:
     if (must_unlock_ref)

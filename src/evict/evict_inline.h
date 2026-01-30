@@ -156,23 +156,23 @@ __wt_evict_get_bucketset_level(WT_SESSION_IMPL *session, WT_PAGE *page)
 }
 
 /*
- * __evict_page_get_bucketset --
- *     If the page is in the right bucketset, return true and set the bucketset return
- *     pointer to the current bucketset. If the page is in the wrong bucketset, return
- *     false and set the bucketset return pointer to the right bucketset.
+ * __evict_get_target_bucketset --
+ *    Return the target bucketset for the page given its properties.
  */
-static WT_INLINE bool
+static WT_INLINE WT_EVICT_BUCKERSET *
 __evict_page_get_bucketset(WT_SESSION_IMPL *session, WT_PAGE *page, WT_EVICT_BUCKETSET **bucketset)
 {
     WT_EVICT *evict;
     int correct_bucketset_level;
 
     *bucketset = NULL;
-    correct_bucketset_level = -1;
     evict = S2C(session)->evict;
 
     /* Find the right bucketset level for the page */
     correct_bucketset_level = __wt_evict_get_bucketset_level(session, page);
+    printf("Correct bucketset level for page %p is %d, bucketset %p\n",
+           page, correct_bucketset_level,
+           &evict->evict_bucketset[correct_bucketset_level]);
 
     WT_ASSERT(session, correct_bucketset_level >= 0 && correct_bucketset_level < WT_EVICT_LEVELS);
     if (page->evict_data.bucket == NULL) {
