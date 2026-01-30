@@ -267,7 +267,7 @@ __wt_evict_create(WT_SESSION_IMPL *session, const char *cfg[])
     WT_EVICT *evict;
     WT_EVICT_BUCKET *bucket;
     WT_EVICT_BUCKETSET *bucketset;
-    uint32_t i, j;
+    int i, j;
 
     conn = S2C(session);
 
@@ -299,10 +299,11 @@ __wt_evict_create(WT_SESSION_IMPL *session, const char *cfg[])
     printf("allocating %" PRIu32 " buckets\n", evict->evict_num_buckets);
     for (i = 0; i < WT_EVICT_LEVELS; i++) {
         bucketset = &evict->evict_bucketset[i];
+        bucketset->level = i;
         WT_RET(__wt_calloc(session, evict->evict_num_buckets, sizeof(WT_EVICT_BUCKET),
                            &bucketset->buckets));
 
-        for (j = 0; j <  evict->evict_num_buckets; j++) {
+        for (j = 0; j <  (int)evict->evict_num_buckets; j++) {
             bucket = &bucketset->buckets[j];
             bucket->bucketset = bucketset;
             bucket->id = (uint64_t)j;

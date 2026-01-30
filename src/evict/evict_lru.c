@@ -937,7 +937,7 @@ __evict_skip_dirty_candidate(WT_SESSION_IMPL *session, WT_PAGE *page)
     return (false);
 }
 
-#if 0
+#if 1
 static const char *WT_EVICT_LEVEL_NAMES[] = {
     "WT_EVICT_LEVEL_WONT_NEED_LEAF",
     "WT_EVICT_LEVEL_CLEAN_LEAF",
@@ -981,12 +981,11 @@ __evict_get_ref(
     WT_REF *ref;
     WT_REF_STATE previous_state;
     uint32_t i, iter, j, min_level, max_level, num_buckets, total_iter;
-#if 0
+#if 1
     uint64_t total_items;
     WT_CACHE *cache;
-    cache = conn->cache;
-    total_items = 0;
 #endif
+
     *btreep = NULL;
     bucketset = NULL;
     conn = S2C(session);
@@ -996,6 +995,10 @@ __evict_get_ref(
     num_buckets = evict->evict_num_buckets;
     previous_state = 0;
 
+#if 1
+    cache = conn->cache;
+    total_items = 0;
+#endif
     /*
      * It is polite to initialize output variables, but it isn't safe for callers to use the
      * previous state if we don't return a locked ref.
@@ -1042,7 +1045,7 @@ __evict_get_ref(
         printf("URGENT EVICTION!!!!!!!!!!!!\n");
     }
 
-#if 0
+#if 1
     printf("enter evict_get_ref, min_level = %s, max_level = %s\n",
            __evict_level_to_string(min_level), __evict_level_to_string(max_level));
 
@@ -1175,7 +1178,7 @@ done:
          */
         (void)__wt_atomic_addv32(&((*btreep)->evict_data.evict_busy), 1);
         (void)__wt_atomic_subi32(&page->evict_data.dhandle->session_inuse, 1);
-//        printf("Found ref in %d iterations\n", (int)total_iter);
+        printf("Found ref in %d iterations\n", (int)total_iter);
     } else {
         WT_STAT_CONN_INCR(session, eviction_get_ref_empty);
         printf("not found\n");
@@ -1718,9 +1721,9 @@ __wt_evict_enqueue_page(WT_SESSION_IMPL *session, WT_REF *ref)
     WT_PAGE *page;
     WT_REF_STATE previous_state;
     bool must_unlock_ref;
-    uint64_t dst_bucket, read_gen;
 
     WT_ASSERT(session, ref != NULL);
+    bucket = NULL;
     page = ref->page;
     previous_state = WT_REF_GET_STATE(ref);
 
@@ -1754,26 +1757,14 @@ __wt_evict_enqueue_page(WT_SESSION_IMPL *session, WT_REF *ref)
     if (page->evict_data.dhandle == NULL)
         page->evict_data.dhandle = session->dhandle;
 
-    if (!__evict_needs_new_bucket(session, page, NULL)) {
-//        printf("page %p in bs %p not enqueued\n", page, page->evict_data.bucket->bucketset);
+    if (__evict_get_target_destination(session, page, NULL, &bucket) == true) {
         goto done;
     }
     else
         __wt_evict_remove(session, ref, false);
 
     /* Get the right bucketset for this page */
-    bucketset = __evict_get_target_bucketset(session, page);
-    //  printf("Got target bucketset %p for page %p\n", bucketset, page);
-
-    /*
-     * Find the right bucket. The page's read generation may change as we are looking for the right
-     * bucket. In that case, the page will end up in a lower bucket than. it should be. That's okay,
-     * because we are maintaining approximately sorted order. We expect such events to be rare,
-     * because read generations are updated infrequently.
-     */
-    read_gen = __wt_atomic_load64(&page->evict_data.read_gen);
-    dst_bucket = __evict_destination_bucket(session, read_gen);
-    bucket = &bucketset->buckets[dst_bucket];
+    bucketset = bucket->bucketset;
 
     __wt_spin_lock(session, &bucket->evict_queue_lock);
     TAILQ_INSERT_TAIL(&bucket->evict_queue, page, evict_data.evict_q);
@@ -1784,9 +1775,7 @@ __wt_evict_enqueue_page(WT_SESSION_IMPL *session, WT_REF *ref)
 
     WT_STAT_CONN_INCR(session, eviction_enqueued_page);
 #if 0
-    printf("Page %p enqueued at level %d, bucket %d, bucketset %p\n", page,
-           (int)__wt_evict_get_bucketset_level(session, page),
-           (int)dst_bucket, bucketset);
+    printf("Page %p enqueued at bucketset %d\n", page, bucketset->level);
 #endif
 done:
     if (must_unlock_ref)

@@ -126,7 +126,7 @@ __evict_destination_bucket(WT_SESSION_IMPL *session, uint64_t read_gen)
  *      Return the expected bucketset level for a page given its properties.
  */
 static WT_INLINE int
-__wt_evict_get_bucketset_level(WT_SESSION_IMPL *session, WT_PAGE *page)
+__evict_target_bucketset_level(WT_SESSION_IMPL *session, WT_PAGE *page)
 {
     uint64_t read_gen;
     if ((read_gen = __wt_atomic_load64(&page->evict_data.read_gen)) == WT_READGEN_WONT_NEED
@@ -156,77 +156,6 @@ __wt_evict_get_bucketset_level(WT_SESSION_IMPL *session, WT_PAGE *page)
 }
 
 /*
- * __evict_get_target_bucketset --
- *    Return the target bucketset for the page given its properties.
- */
-static WT_INLINE WT_EVICT_BUCKETSET *
-__evict_get_target_bucketset(WT_SESSION_IMPL *session, WT_PAGE *page)
-{
-    WT_EVICT *evict;
-    int correct_bucketset_level;
-
-    evict = S2C(session)->evict;
-
-    /* Find the right bucketset level for the page */
-    correct_bucketset_level = __wt_evict_get_bucketset_level(session, page);
-//    printf("Correct bucketset level for page %p is %d, bucketset %p\n",
-//           page, correct_bucketset_level,
-//           &evict->evict_bucketset[correct_bucketset_level]);
-
-    WT_ASSERT(session, correct_bucketset_level >= 0 && correct_bucketset_level < WT_EVICT_LEVELS);
-    return (&evict->evict_bucketset[correct_bucketset_level]);
-}
-
-/*
- * __evict_needs_new_bucket --
- *     A quick check to see if the page will need to be moved into a new bucket.
- */
-static WT_INLINE bool
-__evict_needs_new_bucket(WT_SESSION_IMPL *session, WT_PAGE *page, uint64_t *ret_id)
-{
-    uint64_t cur_bucket_id, read_gen;
-
-    if (page == NULL)
-        return false;
-
-    if (__wt_atomic_load_pointer(&page->evict_data.bucket) == NULL)
-        return true;
-
-//    printf("Page %p: current bs = %p, target bs = %p\n", page, page->evict_data.bucket->bucketset,
-//           __evict_get_target_bucketset(session, page));
-    if (__evict_get_target_bucketset(session, page) != page->evict_data.bucket->bucketset) {
-        return true;
-    }
-
-    /*
-     * Ok if these turn out to be inconsistent with one another: e.g.,
-     * someone modifies the read generation before moving the page to
-     * the right bucketset. In the worst case we will leave the page
-     * in the old bucket, but it will be moved by the thread racing with us.
-     */
-    read_gen = __wt_atomic_load64(&page->evict_data.read_gen);
-    cur_bucket_id = __wt_atomic_load64(&page->evict_data.bucket->id);
-
-    if (read_gen == WT_READGEN_WONT_NEED || read_gen == WT_READGEN_EVICT_SOON)
-        return false;
-
-    if (ret_id != NULL)
-        *ret_id = __evict_destination_bucket(session, read_gen);
-
-    /*
-     * If the page is somewhere between the base bucket for its current read generation and
-     * the read generation at the next step, it's in the right place.
-     */
-    if (cur_bucket_id >= __evict_base_bucket(session, read_gen) &&
-        cur_bucket_id < __evict_base_bucket(session, read_gen + WT_READGEN_STEP)) {
-        return false;
-    }
-    else {
-        return true;
-    }
-}
-
-/*
  * __evict_read_gen --
  *     Get the current read generation number.
  */
@@ -235,6 +164,59 @@ __evict_read_gen(WT_SESSION_IMPL *session)
 {
     return (__wt_atomic_load64(&S2C(session)->evict->read_gen));
 }
+
+
+/*
+ * __evict_get_target_bucketset --
+ *    Return the target bucket and bucketset for the page given its properties.
+ *    if the return value is true, the page's current destination is already
+ *    equal to the target.
+ */
+static WT_INLINE bool
+__evict_get_target_destination(WT_SESSION_IMPL *session, WT_PAGE *page,
+                               WT_EVICT_BUCKETSET **bucketset, WT_EVICT_BUCKET **bucket)
+{
+    WT_EVICT *evict;
+    WT_EVICT_BUCKET *target_bucket;
+    WT_EVICT_BUCKETSET *target_bucketset;
+    int target_bucketset_level;
+    uint64_t target_bucket_id;
+
+    evict = S2C(session)->evict;
+
+    /* Find the right bucketset level for the page */
+    target_bucketset_level = __evict_target_bucketset_level(session, page);
+//    printf("Correct bucketset level for page %p is %d, bucketset %p\n",
+//           page, correct_bucketset_level,
+//           &evict->evict_bucketset[correct_bucketset_level]);
+
+    WT_ASSERT(session, target_bucketset_level >= 0 && target_bucketset_level < WT_EVICT_LEVELS);
+
+    target_bucketset = &evict->evict_bucketset[target_bucketset_level];
+    target_bucket_id = __evict_destination_bucket(session, __wt_atomic_load64(&page->evict_data.read_gen));
+    target_bucket = &target_bucketset->buckets[target_bucket_id];
+
+    if (bucket != NULL)
+        *bucket = target_bucket;
+    if (bucketset != NULL)
+        *bucketset = target_bucketset;
+
+    if (page->evict_data.bucket != target_bucket) {
+        return false; /* page isn't at the right place */
+    }
+    return true;
+}
+
+/*
+ * __evict_needs_new_bucket --
+ *     A quick check to see if the page will need to be moved into a new bucket.
+ */
+static WT_INLINE bool
+__evict_needs_new_bucket(WT_SESSION_IMPL *session, WT_PAGE *page)
+{
+    return !__evict_get_target_destination(session, page, NULL, NULL);
+}
+
 
 /*
  * __evict_readgen_is_soon_or_wont_need --

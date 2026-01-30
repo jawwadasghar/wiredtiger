@@ -147,6 +147,7 @@ __wt_evict(WT_SESSION_IMPL *session, WT_REF *ref, WT_REF_STATE previous_state, u
 {
     WT_CONNECTION_IMPL *conn;
     WT_DECL_RET;
+    WT_EVICT_BUCKETSET *bucketset;
     WT_PAGE *page;
     bool clean_page, closing, ebusy_only, inmem_split, tree_dead;
     int bucketset_level;
@@ -166,7 +167,8 @@ __wt_evict(WT_SESSION_IMPL *session, WT_REF *ref, WT_REF_STATE previous_state, u
     __wt_verbose_debug3(
       session, WT_VERB_EVICTION, "page %p (%s)", (void *)page, __wt_page_type_string(page->type));
 
-    bucketset_level = __wt_evict_get_bucketset_level(session, page);
+    WT_IGNORE_RET(__evict_get_target_destination(session, page, &bucketset, NULL));
+    bucketset_level = bucketset->level;
 
     /* Update the stats */
     switch (bucketset_level) {
