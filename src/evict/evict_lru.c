@@ -937,7 +937,8 @@ __evict_skip_dirty_candidate(WT_SESSION_IMPL *session, WT_PAGE *page)
     return (false);
 }
 
-#if 1
+#define PRINT_CACHE_STATE 0
+#if PRINT_CACHE_STATE
 static const char *WT_EVICT_LEVEL_NAMES[] = {
     "WT_EVICT_LEVEL_WONT_NEED_LEAF",
     "WT_EVICT_LEVEL_CLEAN_LEAF",
@@ -981,7 +982,7 @@ __evict_get_ref(
     WT_REF *ref;
     WT_REF_STATE previous_state;
     uint32_t i, iter, j, min_level, max_level, num_buckets, total_iter;
-#if 1
+#if PRINT_CACHE_STATE
     uint64_t total_items;
     WT_CACHE *cache;
 #endif
@@ -995,7 +996,7 @@ __evict_get_ref(
     num_buckets = evict->evict_num_buckets;
     previous_state = 0;
 
-#if 1
+#if PRINT_CACHE_STATE
     cache = conn->cache;
     total_items = 0;
 #endif
@@ -1045,7 +1046,7 @@ __evict_get_ref(
         printf("URGENT EVICTION!!!!!!!!!!!!\n");
     }
 
-#if 1
+#if PRINT_CACHE_STATE
     printf("enter evict_get_ref, min_level = %s, max_level = %s\n",
            __evict_level_to_string(min_level), __evict_level_to_string(max_level));
 
@@ -1178,7 +1179,8 @@ done:
          */
         (void)__wt_atomic_addv32(&((*btreep)->evict_data.evict_busy), 1);
         (void)__wt_atomic_subi32(&page->evict_data.dhandle->session_inuse, 1);
-        printf("Found ref in %d iterations\n", (int)total_iter);
+        if (total_iter > 1000)
+            printf("Found ref in %d iterations\n", (int)total_iter);
     } else {
         WT_STAT_CONN_INCR(session, eviction_get_ref_empty);
         printf("not found\n");
