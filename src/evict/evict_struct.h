@@ -55,6 +55,7 @@ struct __wt_evict_bucketset {
     uint32_t bucket_last_considered; /* must be updated atomically */
     uint64_t bucketset_num_items;    /* must be updated atomically */
     int level;
+    uint32_t num_buckets;
     WT_CACHE_LINE_PAD_END
 };
 

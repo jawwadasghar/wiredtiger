@@ -775,6 +775,7 @@ __evict_server(WT_SESSION_IMPL *session, bool *did_work)
 
         __evict_tune_workers(session);
 
+//        printf("Evicted pages prev = %d, evicted pages = %d\n", (int)evict->read_gen, (int)evict->evicted_pages);
         /* Increment the shared read generation if eviction is chasing newer pages. */
         if ((evicted_pages_new = __wt_atomic_loadv64(&evict->evicted_pages)) - evicted_pages_prev > 20) {
             __wt_atomic_add64(&evict->read_gen, 1);
@@ -982,6 +983,9 @@ __evict_get_ref(
     WT_REF *ref;
     WT_REF_STATE previous_state;
     uint32_t i, iter, j, min_level, max_level, num_buckets, total_iter;
+    static int times;
+    int empty_buckets;
+
 #if PRINT_CACHE_STATE
     uint64_t total_items;
     WT_CACHE *cache;
@@ -993,7 +997,6 @@ __evict_get_ref(
     evict = conn->evict;
     iter = total_iter = 0;
     min_level = max_level = 0;
-    num_buckets = evict->evict_num_buckets;
     previous_state = 0;
 
 #if PRINT_CACHE_STATE
@@ -1046,26 +1049,14 @@ __evict_get_ref(
         printf("URGENT EVICTION!!!!!!!!!!!!\n");
     }
 
-#if PRINT_CACHE_STATE
-    printf("enter evict_get_ref, min_level = %s, max_level = %s\n",
-           __evict_level_to_string(min_level), __evict_level_to_string(max_level));
-
-    for (i = 0; i < WT_EVICT_LEVELS; i++) {
-        total_items += evict->evict_bucketset[i].bucketset_num_items;
-        printf("level [%s]: %" PRIu64 " items. (%p)\n",
-               __evict_level_to_string(i), evict->evict_bucketset[i].bucketset_num_items,
-               &evict->evict_bucketset[i]);
-    }
-    printf("Total pages:  %" PRIu64 ", %" PRIu64 " dirty bytes, %" PRIu64 " update bytes, %" PRIu64 " total pages,  %" PRIu64 " total bytes images\n",
-           total_items, __wt_cache_dirty_inuse(cache), __wt_cache_bytes_updates(cache),
-           __wt_cache_pages_inuse(cache), __wt_cache_bytes_image(cache));
-#endif
     for (i = min_level; i <= max_level; i++) {
         if (!F_ISSET(conn->evict, WT_EVICT_CACHE_ANY))
             break;
         bucketset = &evict->evict_bucketset[i];
         if (bucketset->bucketset_num_items == 0)
             continue;
+
+        num_buckets = bucketset->num_buckets;
         for (j = __wt_atomic_load32(&bucketset->bucket_last_considered) % num_buckets, iter = 0;
              iter++ < num_buckets; j = (j+1) % num_buckets, total_iter++) {
 
@@ -1077,7 +1068,8 @@ __evict_get_ref(
                 WT_STAT_CONN_INCR(session, eviction_skip_page_locked_bucket);
                 continue;
             }
-            __wt_atomic_store32(&bucketset->bucket_last_considered, j);
+            if (iter > 0)
+                __wt_atomic_store32(&bucketset->bucket_last_considered, j);
 
             if (TAILQ_EMPTY(&bucket->evict_queue))
                 WT_STAT_CONN_INCR(session, eviction_skip_empty_bucket);
@@ -1179,8 +1171,46 @@ done:
          */
         (void)__wt_atomic_addv32(&((*btreep)->evict_data.evict_busy), 1);
         (void)__wt_atomic_subi32(&page->evict_data.dhandle->session_inuse, 1);
-        if (total_iter > 1000)
-            printf("Found ref in %d iterations\n", (int)total_iter);
+
+        if (total_iter > 1000 && bucketset->level == 5) {
+            if (times++ % 200 == 0) {
+                printf("%d\n", times);
+                empty_buckets = 0;
+                for (i = 0; i < bucketset->num_buckets; i++) {
+                    if (TAILQ_EMPTY(&bucketset->buckets[i].evict_queue))
+                        empty_buckets++;
+                }
+
+                printf("At level %d, %d items, %d buckets empty\n",
+                       (int)bucketset->level, (int)bucketset->bucketset_num_items, empty_buckets);
+            }
+        }
+#if PRINT_CACHE_STATE
+        if (total_iter > 1000) {
+            printf("Server read_gen is %" PRIu64 ". Found ref in %d iterations at level %d\n",
+                   evict->read_gen, (int)total_iter, bucketset->level);
+
+            empty_buckets = 0;
+            for (i = 0; i < bucketset->num_buckets; i++) {
+                if (TAILQ_EMPTY(&bucketset->buckets[i].evict_queue))
+                    empty_buckets++;
+            }
+
+            printf("At level %d, %d buckets empty\n", (int)bucketset->level, empty_buckets);
+            printf("evict_get_ref, min_level = %s, max_level = %s\n",
+                   __evict_level_to_string(min_level), __evict_level_to_string(max_level));
+
+            for (i = 0; i < WT_EVICT_LEVELS; i++) {
+                total_items += evict->evict_bucketset[i].bucketset_num_items;
+                printf("level [%s]: %" PRIu64 " items. (%p)\n",
+                       __evict_level_to_string(i), evict->evict_bucketset[i].bucketset_num_items,
+                       &evict->evict_bucketset[i]);
+            }
+            printf("Total pages:  %" PRIu64 ", %" PRIu64 " dirty bytes, %" PRIu64 " update bytes, %" PRIu64 " total pages,  %" PRIu64 " total bytes images\n",
+                   total_items, __wt_cache_dirty_inuse(cache), __wt_cache_bytes_updates(cache),
+                   __wt_cache_pages_inuse(cache), __wt_cache_bytes_image(cache));
+        }
+#endif
     } else {
         WT_STAT_CONN_INCR(session, eviction_get_ref_empty);
         printf("not found\n");

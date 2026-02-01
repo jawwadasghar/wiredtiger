@@ -296,14 +296,21 @@ __wt_evict_create(WT_SESSION_IMPL *session, const char *cfg[])
      *
      * Lower numbered bucket sets have a higher eviction priority.
      */
-    printf("allocating %" PRIu32 " buckets\n", evict->evict_num_buckets);
     for (i = 0; i < WT_EVICT_LEVELS; i++) {
         bucketset = &evict->evict_bucketset[i];
         bucketset->level = i;
-        WT_RET(__wt_calloc(session, evict->evict_num_buckets, sizeof(WT_EVICT_BUCKET),
+
+        //if (i == WT_EVICT_LEVEL_UPDATES)
+        //    bucketset->num_buckets = 2000;
+        //else
+        bucketset->num_buckets = evict->evict_num_buckets;
+
+        printf("allocating %d buckets at level %d \n", (int)bucketset->num_buckets, i);
+
+        WT_RET(__wt_calloc(session, bucketset->num_buckets, sizeof(WT_EVICT_BUCKET),
                            &bucketset->buckets));
 
-        for (j = 0; j <  (int)evict->evict_num_buckets; j++) {
+        for (j = 0; j <  (int)bucketset->num_buckets; j++) {
             bucket = &bucketset->buckets[j];
             bucket->bucketset = bucketset;
             bucket->id = (uint64_t)j;

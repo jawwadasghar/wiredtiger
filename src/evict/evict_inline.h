@@ -65,8 +65,8 @@ __wt_evict_cache_stuck(WT_SESSION_IMPL *session)
 }
 
 /*
- * __evict_base_bucket --
- *      Return the base bucket for the read generation.
+ * __evict_destination_bucket --
+ *       Given the read generation, find the id of its destination bucket.
  *
  * In a single-core world we would compute the home bucket by
  * dividing the read generation by the read generation step, typically set to 100. So
@@ -89,36 +89,35 @@ __wt_evict_cache_stuck(WT_SESSION_IMPL *session)
  * We use a modular division to wrap around to the first bucket when we exceed the
  * length of bucket array.
  */
-static uint64_t
-__evict_base_bucket(WT_SESSION_IMPL *session, uint64_t read_gen)
-{
-    uint32_t num_buckets;
-
-    num_buckets = S2C(session)->evict->evict_num_buckets;
-    return (read_gen / WT_READGEN_STEP * WT_EVICT_EXPECTED_CONTENTION) % num_buckets;
-}
-
-/*
- * __evict_destination_bucket --
- *       Given the read generation, find the id of its destination bucket.
- */
 static WT_INLINE uint64_t
-__evict_destination_bucket(WT_SESSION_IMPL *session, uint64_t read_gen)
+__evict_destination_bucket(WT_SESSION_IMPL *session, WT_EVICT_BUCKETSET *bucketset, WT_PAGE *page)
 {
     uint32_t num_buckets;
+    uint64_t base_bucket, read_gen;
 
-    num_buckets = S2C(session)->evict->evict_num_buckets;
+    num_buckets = bucketset->num_buckets;
+    read_gen = __wt_atomic_load64(&page->evict_data.read_gen);
+
     /*
      * If this is a page we won't need, it goes into a distinct bucketset. In that bucketset
      * all pages have the same read generation, so we place into a randomly selected bucket.
      */
-    if (read_gen == WT_READGEN_WONT_NEED || read_gen == WT_READGEN_EVICT_SOON) {
+    if (read_gen == WT_READGEN_WONT_NEED || read_gen == WT_READGEN_EVICT_SOON
+        || bucketset->level == WT_EVICT_LEVEL_UPDATES ) {
         return (uint64_t)__wt_random(&session->rnd) % num_buckets;
     }
-//    return (__evict_base_bucket(session, read_gen) + session->id % WT_EVICT_EXPECTED_CONTENTION)
-//        % num_buckets;
-    return (__evict_base_bucket(session, read_gen) +
-            __wt_random(&session->rnd) % WT_EVICT_EXPECTED_CONTENTION) % num_buckets;
+
+    /*
+     * Each read generation gets many slots, so threads don't compete for the same bucket when
+     * we are at that generation
+     */
+    base_bucket = read_gen / WT_READGEN_STEP * WT_EVICT_EXPECTED_CONTENTION;
+
+    /*
+     * Add a random offset to the base bucket so we don't contend on the same bucket for the
+     * read generation
+     */
+    return (base_bucket +__wt_random(&session->rnd) % WT_EVICT_EXPECTED_CONTENTION) % num_buckets;
 }
 
 /*
@@ -193,7 +192,7 @@ __evict_get_target_destination(WT_SESSION_IMPL *session, WT_PAGE *page,
     WT_ASSERT(session, target_bucketset_level >= 0 && target_bucketset_level < WT_EVICT_LEVELS);
 
     target_bucketset = &evict->evict_bucketset[target_bucketset_level];
-    target_bucket_id = __evict_destination_bucket(session, __wt_atomic_load64(&page->evict_data.read_gen));
+    target_bucket_id = __evict_destination_bucket(session, target_bucketset, page);
     target_bucket = &target_bucketset->buckets[target_bucket_id];
 
     if (bucket != NULL)
