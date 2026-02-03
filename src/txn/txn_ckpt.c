@@ -1,7 +1,7 @@
 /*-
  * Copyright (c) 2014-present MongoDB, Inc.
  * Copyright (c) 2008-2014 WiredTiger, Inc.
- *	All rights reserved.
+ *  All rights reserved.
  *
  * See the file LICENSE for redistribution information.
  */
@@ -2557,11 +2557,14 @@ __checkpoint_tree_helper(WT_SESSION_IMPL *session, const char *cfg[])
      */
     __checkpoint_update_generation(session);
 
-	/* Wake the eviction threads in case application threads have stalled while the eviction workers
+    /* Wake the eviction threads in case application threads have stalled while the eviction workers
      * decided they couldn't make progress. Without this, application threads will be stalled until
      * the eviction workers next wake - XXX double check.
      */
-    __wt_cond_signal(session, S2C(session)->evict_threads.wait_cond);
+    if (S2C(session)->evict_threads.wait_cond == NULL)
+        printf("COND is NULL\n");
+    else
+        __wt_cond_signal(session, S2C(session)->evict_threads.wait_cond);
 
     return (ret);
 }

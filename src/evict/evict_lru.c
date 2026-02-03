@@ -802,8 +802,8 @@ __evict_server(WT_SESSION_IMPL *session, bool *did_work)
           " Updates: %" PRIu64,
           conn->cache_size, __wt_atomic_load64(&cache->bytes_inmem),
           __wt_atomic_load64(&cache->bytes_dirty_intl) +
-            __wt_atomic_load64(&cache->bytes_dirty_leaf),
-          __wt_atomic_load64(&cache->bytes_updates));
+                            __wt_atomic_load64(&cache->bytes_dirty_leaf),
+                            __wt_atomic_load64(&cache->bytes_updates));
 
         /* Evict pages if there are no workers */
         if (!WT_EVICT_HAS_WORKERS(session)) {
@@ -839,11 +839,11 @@ __evict_server(WT_SESSION_IMPL *session, bool *did_work)
               __wt_atomic_load32(&evict->evict_aggressive_score) < WT_EVICT_SCORE_MAX) {
                 /*
                  * Back off if we aren't making progress.
-                 *
+                 */
                 WT_STAT_CONN_INCR(session, eviction_slept);
-                printf("Eviction server about to pause after doing work \n");
+//                printf("Eviction server about to pause after doing work \n");
                 __wt_cond_wait(session, evict->evict_server_cond, WT_THOUSAND, NULL);
-                printf("Eviction server waking \n"); */
+                //              printf("Eviction server waking \n"); 
                 continue;
             }
             WT_STAT_CONN_INCR(session, eviction_slow);
@@ -983,10 +983,10 @@ __evict_get_ref(
     WT_REF *ref;
     WT_REF_STATE previous_state;
     uint32_t i, iter, j, min_level, max_level, num_buckets, total_iter;
-    static int times;
-    int empty_buckets;
 
 #if PRINT_CACHE_STATE
+    static int times;
+    int empty_buckets;
     uint64_t total_items;
     WT_CACHE *cache;
 #endif
@@ -1172,6 +1172,7 @@ done:
         (void)__wt_atomic_addv32(&((*btreep)->evict_data.evict_busy), 1);
         (void)__wt_atomic_subi32(&page->evict_data.dhandle->session_inuse, 1);
 
+#if PRINT_CACHE_STATE
         if (total_iter > 1000 && bucketset->level == 5) {
             if (times++ % 200 == 0) {
                 printf("%d\n", times);
@@ -1185,6 +1186,7 @@ done:
                        (int)bucketset->level, (int)bucketset->bucketset_num_items, empty_buckets);
             }
         }
+#endif
 #if PRINT_CACHE_STATE
         if (total_iter > 1000) {
             printf("Server read_gen is %" PRIu64 ". Found ref in %d iterations at level %d\n",
@@ -1212,8 +1214,7 @@ done:
         }
 #endif
     } else {
-        WT_STAT_CONN_INCR(session, eviction_get_ref_empty);
-        printf("not found\n");
+            WT_STAT_CONN_INCR(session, eviction_get_ref_empty);
     }
 
     ret = (*refp == NULL ? WT_NOTFOUND : 0);
@@ -1998,7 +1999,7 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
     modified = __wt_page_is_modified(page);
 
     /* Don't queue dirty pages in trees during checkpoints. */
-    if (modified && WT_BTREE_SYNCING(btree)) {
+    if (WT_BTREE_SYNCING(btree) && __wt_page_is_modified(ref->page) && ref->page->modify == NULL) {
         WT_STAT_CONN_INCR(session, eviction_skip_dirty_pages_during_checkpoint);
         return (true);
     }

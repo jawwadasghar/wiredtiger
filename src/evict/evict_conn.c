@@ -233,7 +233,6 @@ __wt_evict_config(WT_SESSION_IMPL *session, const char *cfg[], bool reconfig)
     /* Retrieve the number of buckets in each bucketset */
     WT_RET(__wt_config_gets(session, cfg, "eviction.evict_num_buckets", &cval));
     evict->evict_num_buckets = (uint32_t)cval.val;
-    printf("Num buckets is %" PRIu32 "\n", evict->evict_num_buckets);
 
     /*
      * Resize the thread group if reconfiguring, otherwise the thread group will be initialized as
@@ -300,10 +299,10 @@ __wt_evict_create(WT_SESSION_IMPL *session, const char *cfg[])
         bucketset = &evict->evict_bucketset[i];
         bucketset->level = i;
 
-        //if (i == WT_EVICT_LEVEL_UPDATES)
-        //    bucketset->num_buckets = 2000;
-        //else
-        bucketset->num_buckets = evict->evict_num_buckets;
+        if (i == WT_EVICT_LEVEL_UPDATES)
+            bucketset->num_buckets = 2000;
+        else
+            bucketset->num_buckets = evict->evict_num_buckets;
 
         printf("allocating %d buckets at level %d \n", (int)bucketset->num_buckets, i);
 
