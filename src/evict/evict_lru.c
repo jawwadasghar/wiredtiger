@@ -1052,6 +1052,7 @@ __evict_get_ref(
     for (i = min_level; i <= max_level; i++) {
         if (!F_ISSET(conn->evict, WT_EVICT_CACHE_ANY))
             break;
+
         bucketset = &evict->evict_bucketset[i];
         if (bucketset->bucketset_num_items == 0)
             continue;
@@ -1913,7 +1914,7 @@ __wt_evict_page_set_clean(WT_SESSION_IMPL *session, WT_PAGE *page)
     }
 }
 
-#if 0
+#if 1
 /*
  * __evict_skip_tree --
  *     Decide if we should skip this tree
@@ -1947,12 +1948,7 @@ __evict_skip_tree(WT_SESSION_IMPL *session, WT_BTREE *btree)
      *
      * If the file is contributing heavily to our cache usage then ignore the "stickiness" of
      * its pages.
-     *
-    if (btree->evict_data.evict_priority != 0) {
-        printf("Evict priority %d, evict_aggressive = %s, dominating_cache = %s\n",
-               (int)btree->evict_data.evict_priority, __wt_evict_aggressive(session)?"true":"false",
-               __evict_btree_dominating_cache(session, btree)?"true":"false");
-               }*/
+     */
     if (btree->evict_data.evict_priority != 0 && !__wt_evict_aggressive(session) &&
         !__evict_btree_dominating_cache(session, btree)) {
         WT_STAT_CONN_INCR(session, eviction_skip_trees_stick_in_cache);
@@ -2003,18 +1999,11 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
         WT_STAT_CONN_INCR(session, eviction_skip_dirty_pages_during_checkpoint);
         return (true);
     }
-/*
+#if 1
     if (__evict_skip_tree(session, btree)) {
         return(true);
     }
-*/
-    /*
-     * It's possible (but unlikely) to visit a page without a read generation, if we race with the
-     * read instantiating the page. Set the page's read generation here to ensure a bug doesn't
-     * somehow leave a page without a read generation.
-     */
-    if (__wt_atomic_load64(&page->evict_data.read_gen) == WT_READGEN_NOTSET)
-        __wt_evict_touch_page(session, ref, false, false);
+#endif
 
     /*
      * Do not evict a clean metadata page that contains historical data needed to satisfy a reader.
