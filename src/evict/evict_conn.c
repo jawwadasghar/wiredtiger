@@ -299,10 +299,7 @@ __wt_evict_create(WT_SESSION_IMPL *session, const char *cfg[])
         bucketset = &evict->evict_bucketset[i];
         bucketset->level = i;
 
-        if (i == WT_EVICT_LEVEL_UPDATES)
-            bucketset->num_buckets = 2000;
-        else
-            bucketset->num_buckets = evict->evict_num_buckets;
+        bucketset->num_buckets = evict->evict_num_buckets;
 
         printf("allocating %d buckets at level %d \n", (int)bucketset->num_buckets, i);
 
