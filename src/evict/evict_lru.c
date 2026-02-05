@@ -978,10 +978,10 @@ __evict_get_ref(
     WT_EVICT *evict;
     WT_EVICT_BUCKET *bucket;
     WT_EVICT_BUCKETSET *bucketset;
-    WT_HAZARD *hazard;
     WT_PAGE *page;
     WT_REF *ref;
     WT_REF_STATE previous_state;
+    bool skip_page;
     uint32_t i, iter, j, min_level, max_level, num_buckets, total_iter;
 
 #if PRINT_CACHE_STATE
@@ -1085,8 +1085,17 @@ __evict_get_ref(
                  * Pages created during splits may end up in the eviction data structures before
                  * their home gets set. This is the same check as we make for the root page.
                  * Skip them until their home gets set or if this is a true root.
+                 * Keep this check here, because split pages spend a small window
+                 * of time without a home, which makes them look like a root page.
+                 * This condition is temporary as the home gets set quickly after.
                  */
                 if (__wt_ref_is_root(ref)) {
+                    ref = NULL;
+                    continue;
+                }
+
+                /* This is a racey check. Make the load atomic */
+                if (WT_BTREE_SYNCING((WT_BTREE *)page->evict_data.dhandle->handle)) {
                     ref = NULL;
                     continue;
                 }
@@ -1111,42 +1120,17 @@ __evict_get_ref(
                  * decide to skip.
                  */
                 (void)__wt_atomic_addi32(&page->evict_data.dhandle->session_inuse, 1);
-                WT_WITH_DHANDLE(session, page->evict_data.dhandle, hazard =__wt_hazard_check(session, ref, NULL));
-                if (hazard != NULL) {
+                WT_WITH_DHANDLE(session, page->evict_data.dhandle, skip_page = __evict_skip_page(session, ref));
+                if (skip_page) {
                     WT_REF_UNLOCK(ref, previous_state);
                     ref = NULL;
-
                     (void)__wt_atomic_subi32(&page->evict_data.dhandle->session_inuse, 1);
-                    WT_STAT_CONN_INCR(session, eviction_skip_page_hazard);
                     continue;
                 }
-                if (page->evict_data.evict_skip) {
-                    /*
-                     * We are skipping the page, because we recently skipped it and the skip flag
-                     * was set. Reset, the flag, so we don't skip it all the time.
-                     */
-                    page->evict_data.evict_skip = false;
-                    WT_REF_UNLOCK(ref, previous_state);
-                    ref = NULL;
-
-                    (void)__wt_atomic_subi32(&page->evict_data.dhandle->session_inuse, 1);
-                    WT_STAT_CONN_INCR(session, eviction_skip_pages_retry);
-                    continue;
-                } else {
-                    bool skip_page;
-
-                    WT_WITH_DHANDLE(session, page->evict_data.dhandle, skip_page = __evict_skip_page(session, ref));
-                    if (skip_page) {
-                        WT_REF_UNLOCK(ref, previous_state);
-                        ref = NULL;
-
-                        (void)__wt_atomic_subi32(&page->evict_data.dhandle->session_inuse, 1);
-                        continue;
-                    } else /* found a reference */
-                        goto unlock_bucket_and_done;
-                }
+                else /* found a reference */
+                    goto unlock_bucket_and_done;
             }
-unlock_bucket_and_done:
+        unlock_bucket_and_done:
             if (ref != NULL) {
                 TAILQ_REMOVE(&bucket->evict_queue, page, evict_data.evict_q);
                 page->evict_data.bucket = NULL;
@@ -1994,16 +1978,25 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
     page = ref->page;
     modified = __wt_page_is_modified(page);
 
+
+    /*
+     * Don't attempt eviction of internal pages with children in cache.
+     */
+    if (F_ISSET(ref, WT_REF_FLAG_INTERNAL) &&
+      __evict_internal_page_has_cached_children(session, ref)) {
+        WT_STAT_CONN_INCR(session, eviction_skip_intl_page_with_active_child);
+        return (true);
+    }
+
     /* Don't queue dirty pages in trees during checkpoints. */
     if (WT_BTREE_SYNCING(btree) && __wt_page_is_modified(ref->page) && ref->page->modify == NULL) {
         WT_STAT_CONN_INCR(session, eviction_skip_dirty_pages_during_checkpoint);
         return (true);
     }
-#if 1
+
     if (__evict_skip_tree(session, btree)) {
         return(true);
     }
-#endif
 
     /*
      * Do not evict a clean metadata page that contains historical data needed to satisfy a reader.
@@ -2017,15 +2010,6 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
         return (true);
     }
 
-    /*
-     * Don't attempt eviction of internal pages with children in cache.
-     */
-    if (F_ISSET(ref, WT_REF_FLAG_INTERNAL) &&
-      __evict_internal_page_has_cached_children(session, ref)) {
-        WT_STAT_CONN_INCR(session, eviction_skip_intl_page_with_active_child);
-        return (true);
-    }
-
     /* Evaluate dirty page candidacy, when eviction is not aggressive. */
     if (!__wt_evict_aggressive(session) && modified && __evict_skip_dirty_candidate(session, page)) {
         WT_STAT_CONN_INCR(session, eviction_skip_page_dirty_not_aggressive);
@@ -2036,6 +2020,21 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref)
     if (!__wt_page_can_evict(session, ref, NULL)) {
         WT_STAT_CONN_INCR(session, eviction_skip_page_cannot_evict);
         return (true);
+    }
+
+    if (__wt_hazard_check(session, ref, NULL) != NULL) {
+        WT_STAT_CONN_INCR(session, eviction_skip_page_hazard);
+        return true;
+    }
+
+    if (page->evict_data.evict_skip) {
+        /*
+         * We are skipping the page, because we recently skipped it and the skip flag
+         * was set. Reset, the flag, so we don't skip it all the time.
+         */
+        page->evict_data.evict_skip = false;
+        WT_STAT_CONN_INCR(session, eviction_skip_pages_retry);
+        return true;
     }
 
     return (false);
