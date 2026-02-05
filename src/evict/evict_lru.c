@@ -1094,11 +1094,15 @@ __evict_get_ref(
                     continue;
                 }
 
-                /* This is a racey check. Make the load atomic */
+                /*
+                 * We have the bucket locked. Even if someone is looking at the
+                 * page they cannot be removing it from the bucket and hence
+                 * from the tree. So we can access its dhandle attribute.
+                 *
                 if (WT_BTREE_SYNCING((WT_BTREE *)page->evict_data.dhandle->handle)) {
                     ref = NULL;
                     continue;
-                }
+                    }*/
 
                 /* Try to lock the reference. If it's already locked, skip it. */
                 previous_state =  WT_REF_GET_STATE(ref);
