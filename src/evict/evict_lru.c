@@ -1064,7 +1064,7 @@ __evict_get_ref(
     if (F_ISSET(evict, WT_EVICT_CACHE_DIRTY))
         max_level = WT_EVICT_LEVEL_DIRTY_INTERNAL;
     if (F_ISSET(evict, WT_EVICT_CACHE_UPDATES))
-        max_level = WT_EVICT_LEVEL_UPDATES_INTERNAL;
+        max_level = WT_EVICT_LEVEL_UPDATES_LEAF;//WT_EVICT_LEVEL_UPDATES_INTERNAL;
 
     if (!F_ISSET(evict, WT_EVICT_CACHE_CLEAN))
         min_level = WT_EVICT_LEVEL_DIRTY_LEAF;
@@ -1957,7 +1957,7 @@ __wt_evict_page_set_clean(WT_SESSION_IMPL *session, WT_PAGE *page)
     }
 }
 
-#if 0
+#if 1
 /*
  * __evict_skip_tree --
  *     Decide if we should skip this tree
@@ -2055,7 +2055,7 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref, int level)
         evict_skip_dirty_checkpoint++;
         return (true);
     }
-#if 0
+#if 1
     if (__evict_skip_tree(session, btree)) {
         evict_skip_tree++;
         return(true);
@@ -2074,12 +2074,12 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref, int level)
         return (true);
     }
 
-    /* Evaluate dirty page candidacy, when eviction is not aggressive. 
+    /* Evaluate dirty page candidacy, when eviction is not aggressive. */
     if (!__wt_evict_aggressive(session) && modified && __evict_skip_dirty_candidate(session, page)) {
         WT_STAT_CONN_INCR(session, eviction_skip_page_dirty_not_aggressive);
         evict_skip_dirty_not_aggressive++;
         return (true);
-        }*/
+    }
 
     /* If the page can't be evicted, give up. */
     if (!__wt_page_can_evict(session, ref, NULL)) {
