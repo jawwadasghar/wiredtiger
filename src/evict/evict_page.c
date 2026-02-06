@@ -178,20 +178,26 @@ __wt_evict(WT_SESSION_IMPL *session, WT_REF *ref, WT_REF_STATE previous_state, u
     case WT_EVICT_LEVEL_CLEAN_LEAF:
         WT_STAT_CONN_INCR(session, eviction_target_bucket_clean_leaf);
         break;
-    case WT_EVICT_LEVEL_WONT_NEED_INTERNAL:
-        WT_STAT_CONN_INCR(session, eviction_target_bucket_wont_need_internal);
-        break;
-    case WT_EVICT_LEVEL_CLEAN_INTERNAL:
-        WT_STAT_CONN_INCR(session, eviction_target_bucket_clean_internal);
-        break;
     case WT_EVICT_LEVEL_DIRTY_LEAF:
         WT_STAT_CONN_INCR(session, eviction_target_bucket_dirty_leaf);
+        break;
+    case WT_EVICT_LEVEL_WONT_NEED_INTERNAL:
+        WT_STAT_CONN_INCR(session, eviction_target_bucket_wont_need_internal);
         break;
     case WT_EVICT_LEVEL_DIRTY_INTERNAL:
         WT_STAT_CONN_INCR(session, eviction_target_bucket_dirty_internal);
         break;
-    default: /* XXX -- Fix this */
-        ;//printf("Invalid bucket %d\n", bucketset_level);
+    case WT_EVICT_LEVEL_UPDATES_LEAF:
+        WT_STAT_CONN_INCR(session, eviction_target_bucket_updates_leaf);
+        break;
+    case WT_EVICT_LEVEL_UPDATES_INTERNAL:
+        WT_STAT_CONN_INCR(session, eviction_target_bucket_updates_internal);
+        break;
+    case WT_EVICT_LEVEL_CLEAN_INTERNAL:
+        WT_STAT_CONN_INCR(session, eviction_target_bucket_clean_internal);
+        break;
+    default:
+        WT_ASSERT(session, 0);
     }
 
     if (!WT_EVICT_PAGE_CLEARED(page))
@@ -825,8 +831,10 @@ __evict_review(WT_SESSION_IMPL *session, WT_REF *ref, uint32_t evict_flags, bool
      */
     if (F_ISSET(ref, WT_REF_FLAG_INTERNAL)) {
         WT_WITH_PAGE_INDEX(session, ret = __evict_child_check(session, ref));
-        if (ret != 0)
+        if (ret != 0) {
+            printf("Fail on internal page with active chikdren\n");
             WT_STAT_CONN_INCR(session, eviction_fail_active_children_on_an_internal_page);
+        }
         WT_RET(ret);
     }
 

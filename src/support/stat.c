@@ -1418,6 +1418,8 @@ static const char *const __stats_connection_desc[] = {
   "cache: eviction selected pages from clean leaf bucket",
   "cache: eviction selected pages from dirty internal bucket",
   "cache: eviction selected pages from dirty leaf bucket",
+  "cache: eviction selected pages from updates internal bucket",
+  "cache: eviction selected pages from updates leaf bucket",
   "cache: eviction selected pages from won't need internal bucket",
   "cache: eviction selected pages from won't need leaf bucket",
   "cache: eviction server read generation value",
@@ -2167,6 +2169,8 @@ __wt_stat_connection_clear_single(WT_CONNECTION_STATS *stats)
     stats->eviction_target_bucket_clean_leaf = 0;
     stats->eviction_target_bucket_dirty_internal = 0;
     stats->eviction_target_bucket_dirty_leaf = 0;
+    stats->eviction_target_bucket_updates_internal = 0;
+    stats->eviction_target_bucket_updates_leaf = 0;
     stats->eviction_target_bucket_wont_need_internal = 0;
     stats->eviction_target_bucket_wont_need_leaf = 0;
     stats->eviction_server_readgen = 0;
@@ -2890,6 +2894,10 @@ __wt_stat_connection_aggregate(WT_CONNECTION_STATS **from, WT_CONNECTION_STATS *
       WT_STAT_CONN_READ(from, eviction_target_bucket_dirty_internal);
     to->eviction_target_bucket_dirty_leaf +=
       WT_STAT_CONN_READ(from, eviction_target_bucket_dirty_leaf);
+    to->eviction_target_bucket_updates_internal +=
+      WT_STAT_CONN_READ(from, eviction_target_bucket_updates_internal);
+    to->eviction_target_bucket_updates_leaf +=
+      WT_STAT_CONN_READ(from, eviction_target_bucket_updates_leaf);
     to->eviction_target_bucket_wont_need_internal +=
       WT_STAT_CONN_READ(from, eviction_target_bucket_wont_need_internal);
     to->eviction_target_bucket_wont_need_leaf +=

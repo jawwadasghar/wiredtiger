@@ -103,7 +103,8 @@ __evict_destination_bucket(WT_SESSION_IMPL *session, WT_EVICT_BUCKETSET *buckets
      * all pages have the same read generation, so we place into a randomly selected bucket.
      */
     if (read_gen == WT_READGEN_WONT_NEED || read_gen == WT_READGEN_EVICT_SOON
-        || bucketset->level == WT_EVICT_LEVEL_UPDATES ) {
+        || bucketset->level == WT_EVICT_LEVEL_UPDATES_LEAF
+        || bucketset->level == WT_EVICT_LEVEL_UPDATES_INTERNAL) {
         return (uint64_t)__wt_random(&session->rnd) % num_buckets;
     }
 
@@ -139,12 +140,16 @@ __evict_target_bucketset_level(WT_SESSION_IMPL *session, WT_PAGE *page)
         return WT_EVICT_LEVEL_CLEAN_LEAF;
     else if (WT_PAGE_IS_INTERNAL(page) && !__wt_page_is_modified(page) && page->modify == NULL)
     return WT_EVICT_LEVEL_CLEAN_INTERNAL;
-    else if (!WT_PAGE_IS_INTERNAL(page) && __wt_page_is_modified(page) && page->modify == NULL)
+    else if (!WT_PAGE_IS_INTERNAL(page) && __wt_page_is_modified(page))
         return WT_EVICT_LEVEL_DIRTY_LEAF;
-    else if (WT_PAGE_IS_INTERNAL(page) && __wt_page_is_modified(page) && page->modify == NULL)
+    else if (WT_PAGE_IS_INTERNAL(page) && __wt_page_is_modified(page))
         return WT_EVICT_LEVEL_DIRTY_INTERNAL;
-    else if (page->modify != NULL)
-        return WT_EVICT_LEVEL_UPDATES;
+    else if (page->modify != NULL) {
+        if (WT_PAGE_IS_INTERNAL(page))
+            return WT_EVICT_LEVEL_UPDATES_INTERNAL;
+        else
+            return WT_EVICT_LEVEL_UPDATES_LEAF;
+    }
 
      /*
       * If we are here, we couldn't determine the bucketset level for a page

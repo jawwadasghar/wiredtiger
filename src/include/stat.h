@@ -514,6 +514,8 @@ struct __wt_connection_stats {
     int64_t eviction_target_bucket_clean_leaf;
     int64_t eviction_target_bucket_dirty_internal;
     int64_t eviction_target_bucket_dirty_leaf;
+    int64_t eviction_target_bucket_updates_internal;
+    int64_t eviction_target_bucket_updates_leaf;
     int64_t eviction_target_bucket_wont_need_internal;
     int64_t eviction_target_bucket_wont_need_leaf;
     int64_t eviction_server_readgen;
