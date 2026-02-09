@@ -747,3 +747,21 @@ __wti_evict_hs_dirty(WT_SESSION_IMPL *session)
       ((uint64_t)(conn->evict->eviction_dirty_trigger * bytes_max) / 100));
 }
 
+/* !!!
+ * __wt_evict_app_assist_worker_check --
+ *     Keep for compatibility with existing interface. No need for application threads to assist
+ *     with eviction. Eviction doesn't get stuck.
+ */
+static WT_INLINE int
+__wt_evict_app_assist_worker_check(
+  WT_SESSION_IMPL *session, bool busy, bool readonly, bool *didworkp)
+{
+
+    (void)session;
+    (void)busy;
+    (void)readonly;
+    if (didworkp != NULL)
+        *didworkp = true;
+
+    return (0);
+}

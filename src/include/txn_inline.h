@@ -1,7 +1,7 @@
 /*-
  * Copyright (c) 2014-present MongoDB, Inc.
  * Copyright (c) 2008-2014 WiredTiger, Inc.
- *	All rights reserved.
+ *  All rights reserved.
  *
  * See the file LICENSE for redistribution information.
  */
@@ -1065,9 +1065,9 @@ __wt_txn_visible_id_snapshot(
      * taking the snapshot should be invisible, even if the snapshot is empty.
      *
      * Snapshot data:
-     *	ids >= snap_max not visible,
-     *	ids < snap_min are visible,
-     *	everything else is visible unless it is found in the snapshot.
+     *  ids >= snap_max not visible,
+     *  ids < snap_min are visible,
+     *  everything else is visible unless it is found in the snapshot.
      */
     if (WT_TXNID_LE(snap_max, id))
         return (false);
