@@ -831,10 +831,8 @@ __evict_review(WT_SESSION_IMPL *session, WT_REF *ref, uint32_t evict_flags, bool
      */
     if (F_ISSET(ref, WT_REF_FLAG_INTERNAL)) {
         WT_WITH_PAGE_INDEX(session, ret = __evict_child_check(session, ref));
-        if (ret != 0) {
-            printf("Fail on internal page with active chikdren\n");
+        if (ret != 0)
             WT_STAT_CONN_INCR(session, eviction_fail_active_children_on_an_internal_page);
-        }
         WT_RET(ret);
     }
 

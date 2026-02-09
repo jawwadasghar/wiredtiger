@@ -1082,10 +1082,6 @@ __evict_get_ref(
         if (!F_ISSET(conn->evict, WT_EVICT_CACHE_ANY))
             break;
 
-        if (i == WT_EVICT_LEVEL_UPDATES_INTERNAL) {
-            printf("At internal updates. At previous level we have %d items\n",
-                   (int)evict->evict_bucketset[i-1].bucketset_num_items);
-        }
         bucketset = &evict->evict_bucketset[i];
         if (bucketset->bucketset_num_items == 0)
             continue;
@@ -1192,8 +1188,28 @@ done:
         *previous_statep = previous_state;
         *refp = ref;
 
-        if (__wt_page_evict_clean(ref->page) && ref->page->modify != NULL)
-            WT_STAT_CONN_INCR(session, eviction_clean_pages_with_updates_selected);
+#if 0
+        if (F_ISSET(evict, WT_EVICT_CACHE_UPDATES_HARD) &&
+            F_ISSET(evict, WT_EVICT_CACHE_DIRTY)) {
+            printf("Looked hard for updates and dirty pages. Flags are %d. Found at level %d\n",
+                   (int)evict->flags, (int)i);
+            for (i = min_level; i <= max_level; i++) {
+                printf("Level %d: %d items\n", (int)i,
+                       (int)evict->evict_bucketset[i].bucketset_num_items);
+            }
+            printf("skipped = %d, skip_locked = %d, evict_skip_internal = %d, evict_skip_dirty_checkpoint = %d, evict_skip_tree  = %d, evict_skip_metadata_with_history = %d, evict_skip_dirty_not_aggressive = %d, evict_skip_cannot_evict = %d, evict_skip_hazard = %d, evict_skip_retry = %d, early_skip_tree = %d \n",
+                   skipped, skip_locked,
+                   evict_skip_internal,
+                   evict_skip_dirty_checkpoint,
+                   evict_skip_tree,
+                   evict_skip_metadata_with_history,
+                   evict_skip_dirty_not_aggressive,
+                   evict_skip_cannot_evict,
+                   evict_skip_hazard,
+                   evict_skip_retry,
+                   early_skipped_tree);
+        }
+#endif
 
         /* Decrement items in the bucketset where the page came from */
         __wt_atomic_subv64(&bucketset->bucketset_num_items, 1);
@@ -1245,19 +1261,6 @@ done:
         }
 #endif
     } else {
-        printf("Not found. skipped = %d, skip_locked = %d, min_level = %d, max_level = %d, last level = %d, flags = %d, items at last level = %d, evict_skip_internal = %d, evict_skip_dirty_checkpoint = %d, evict_skip_tree  = %d, evict_skip_metadata_with_history = %d, evict_skip_dirty_not_aggressive = %d, evict_skip_cannot_evict = %d, evict_skip_hazard = %d, evict_skip_retry = %d, early_skip_tree = %d \n",
-               skipped, skip_locked, (int)min_level, (int)max_level,
-               (int)i, (int)evict->flags,
-               (int)evict->evict_bucketset[i-1].bucketset_num_items,
-               evict_skip_internal,
-               evict_skip_dirty_checkpoint,
-               evict_skip_tree,
-               evict_skip_metadata_with_history,
-               evict_skip_dirty_not_aggressive,
-               evict_skip_cannot_evict,
-               evict_skip_hazard,
-               evict_skip_retry,
-               early_skipped_tree);
         WT_STAT_CONN_INCR(session, eviction_get_ref_empty);
     }
 
@@ -1328,169 +1331,6 @@ __evict_page(WT_SESSION_IMPL *session)
         __wt_atomic_addv64(&S2C(session)->evict->evicted_pages, 1);
 
     WT_TRACK_OP_END(session);
-    return (ret);
-}
-
-/*
- * __wti_evict_app_assist_worker --
- *     Worker function for __wt_evict_app_assist_worker_check: evict pages if the cache crosses
- *     eviction trigger thresholds.
- */
-int
-__wti_evict_app_assist_worker(WT_SESSION_IMPL *session, bool busy, bool readonly, double pct_full)
-{
-    WT_CONNECTION_IMPL *conn;
-    WT_DECL_RET;
-    WT_EVICT *evict;
-    WT_TRACK_OP_DECL;
-    WT_TXN_GLOBAL *txn_global;
-    WT_TXN_SHARED *txn_shared;
-    uint32_t tmp_evict_aggressive_score;
-    uint64_t cache_max_wait_us, initial_progress, max_progress;
-    uint64_t elapsed, time_start, time_stop;
-    bool app_thread;
-
-    WT_TRACK_OP_INIT(session);
-
-    conn = S2C(session);
-    evict = conn->evict;
-    time_start = 0;
-    txn_global = &conn->txn_global;
-    txn_shared = WT_SESSION_TXN_SHARED(session);
-
-    if (session->cache_max_wait_us != 0)
-        cache_max_wait_us = session->cache_max_wait_us;
-    else
-        cache_max_wait_us = evict->cache_max_wait_us;
-
-    /* FIXME-WT-12905: Pre-fetch threads are not allowed to be pulled into eviction. */
-    if (F_ISSET(session, WT_SESSION_PREFETCH_THREAD))
-        goto done;
-
-    /*
-     * Before we enter the eviction generation, make sure this session has a cached history store
-     * cursor, otherwise we can deadlock with a session wanting exclusive access to a handle: that
-     * session will have a handle list write lock and will be waiting on eviction to drain, we'll be
-     * inside eviction waiting on a handle list read lock to open a history store cursor.
-     */
-    WT_ERR(__wt_curhs_cache(session));
-
-    /*
-     * It is not safe to proceed if the eviction server threads aren't setup yet.
-     */
-    if (!__wt_atomic_loadbool(&conn->evict_server_running) || (busy && pct_full < 100.0))
-        goto done;
-
-    /* Wake the eviction threads if we need to do work. */
-    __wt_evict_server_wake(session);
-
-    /* Track how long application threads spend doing eviction. */
-    app_thread = !F_ISSET(session, WT_SESSION_INTERNAL);
-    if (app_thread)
-        time_start = __wt_clock(session);
-
-    /*
-     * Note that this for loop is designed to reset expected eviction error codes before exiting,
-     * namely, the busy return and empty eviction queue. We do not need the calling functions to
-     * have to deal with internal eviction return codes.
-     */
-    for (initial_progress = __wt_atomic_loadv64(&evict->eviction_progress);; ret = 0) {
-        /*
-         * If eviction is stuck, check if this thread is likely causing problems and should be
-         * rolled back. Ignore if in recovery, those transactions can't be rolled back.
-         */
-        if (!F_ISSET(conn, WT_CONN_RECOVERING) && __wt_evict_cache_stuck(session)) {
-            ret = __wt_txn_is_blocking(session);
-            if (ret == WT_ROLLBACK) {
-                if ((tmp_evict_aggressive_score = __wt_atomic_load32(&evict->evict_aggressive_score)) > 0)
-                    WT_IGNORE_RET(__wt_atomic_cas32(&evict->evict_aggressive_score, tmp_evict_aggressive_score,
-                                                    tmp_evict_aggressive_score - 1));
-                WT_STAT_CONN_INCR(session, txn_rollback_oldest_pinned);
-                __wt_verbose_debug1(session, WT_VERB_TRANSACTION, "rollback reason: %s",
-                  session->txn->rollback_reason);
-            }
-            WT_ERR(ret);
-        }
-
-        /*
-         * Check if we've exceeded our operation timeout, this would also get called from the
-         * previous txn is blocking call, however it won't pickup transactions that have been
-         * committed or rolled back as their mod count is 0, and that txn needs to be the oldest.
-         *
-         * Additionally we don't return rollback which could confuse the caller.
-         */
-        if (__wt_op_timer_fired(session))
-            break;
-
-        /* Check if we have exceeded the global or the session timeout for waiting on the cache. */
-        if (time_start != 0 && cache_max_wait_us != 0) {
-            time_stop = __wt_clock(session);
-            if (session->cache_wait_us + WT_CLOCKDIFF_US(time_stop, time_start) > cache_max_wait_us)
-                break;
-        }
-
-        /*
-         * Check if we have become busy.
-         *
-         * If we're busy (because of the transaction check we just did or because our caller is
-         * waiting on a longer-than-usual event such as a page read), and the cache level drops
-         * below 100%, limit the work to 5 evictions and return. If that's not the case, we can do
-         * more.
-         */
-        if (!busy && __wt_atomic_loadv64(&txn_shared->pinned_id) != WT_TXN_NONE &&
-          __wt_atomic_loadv64(&txn_global->current) != __wt_atomic_loadv64(&txn_global->oldest_id))
-            busy = true;
-        max_progress = busy ? 5 : 20;
-
-        /* See if eviction is still needed. */
-        if (!__wt_evict_needed(session, busy, readonly, &pct_full) ||
-          (pct_full < 100.0 &&
-            (__wt_atomic_loadv64(&evict->eviction_progress) > initial_progress + max_progress)))
-            break;
-
-        /* Evict a page. */
-        switch (ret = __evict_page(session)) {
-        case 0:
-            if (busy)
-                goto err;
-        /* FALLTHROUGH */
-        case EBUSY:
-            break;
-        case WT_NOTFOUND:
-            evict->app_waits++;
-            break;
-        default:
-            goto err;
-        }
-    }
-
-err:
-    if (time_start != 0) {
-        time_stop = __wt_clock(session);
-        elapsed = WT_CLOCKDIFF_US(time_stop, time_start);
-        WT_STAT_CONN_INCR(session, application_cache_ops);
-        WT_STAT_CONN_INCRV(session, application_cache_time, elapsed);
-        WT_STAT_SESSION_INCRV(session, cache_time, elapsed);
-        session->cache_wait_us += elapsed;
-        /*
-         * Check if a rollback is required only if there has not been an error. Returning an error
-         * takes precedence over asking for a rollback. We can not do both.
-         */
-        if (ret == 0 && cache_max_wait_us != 0 && session->cache_wait_us > cache_max_wait_us) {
-            ret = __wt_txn_rollback_required(session, WT_TXN_ROLLBACK_REASON_CACHE_OVERFLOW);
-            if ((tmp_evict_aggressive_score = __wt_atomic_load32(&evict->evict_aggressive_score)) > 0) {
-                WT_IGNORE_RET(__wt_atomic_cas32(&evict->evict_aggressive_score, tmp_evict_aggressive_score,
-                                                tmp_evict_aggressive_score - 1));
-            }
-            WT_STAT_CONN_INCR(session, eviction_timed_out_ops);
-            __wt_verbose_notice(
-              session, WT_VERB_TRANSACTION, "rollback reason: %s", session->txn->rollback_reason);
-        }
-    }
-
-done:
-    WT_TRACK_OP_END(session);
-
     return (ret);
 }
 
