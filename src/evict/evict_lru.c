@@ -1811,6 +1811,16 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref, int level)
     page = ref->page;
     modified = __wt_page_is_modified(page);
 
+    if (page->evict_data.evict_skip) {
+        /*
+         * We are skipping the page, because we recently skipped it and the skip flag
+         * was set. Reset, the flag, so we don't skip it all the time.
+         */
+        page->evict_data.evict_skip = false;
+        WT_STAT_CONN_INCR(session, eviction_skip_pages_retry);
+        return true;
+    }
+
     /*
      * Don't attempt eviction of internal pages with children in cache.
      */
@@ -1856,16 +1866,6 @@ __evict_skip_page(WT_SESSION_IMPL *session, WT_REF *ref, int level)
 
     if (__wt_hazard_check(session, ref, NULL) != NULL) {
         WT_STAT_CONN_INCR(session, eviction_skip_page_hazard);
-        return true;
-    }
-
-    if (page->evict_data.evict_skip) {
-        /*
-         * We are skipping the page, because we recently skipped it and the skip flag
-         * was set. Reset, the flag, so we don't skip it all the time.
-         */
-        page->evict_data.evict_skip = false;
-        WT_STAT_CONN_INCR(session, eviction_skip_pages_retry);
         return true;
     }
 
