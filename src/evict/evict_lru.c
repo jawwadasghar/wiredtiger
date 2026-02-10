@@ -1197,7 +1197,6 @@ done:
         }
 #endif
     } else {
-        printf("Not found. flags are %d\n", (int)evict->flags);
         WT_STAT_CONN_INCR(session, eviction_get_ref_empty);
     }
 
