@@ -287,12 +287,6 @@ conn_stats = [
     ##########################################
     EvictStat('eviction_active_workers', 'eviction worker thread active', 'no_clear'),
     EvictStat('eviction_aggressive_set', 'eviction currently operating in aggressive mode', 'no_clear,no_scale'),
-    EvictStat('eviction_app_attempt', 'page evict attempts by application threads'),
-    EvictStat('eviction_app_dirty_attempt', 'modified page evict attempts by application threads'),
-    EvictStat('eviction_app_dirty_fail', 'modified page evict failures by application threads'),
-    EvictStat('eviction_app_fail', 'page evict failures by application threads'),
-    EvictStat('eviction_app_time', 'application thread time evicting (usecs)'),
-    EvictStat('eviction_clean_pages_with_updates_selected', 'eviction selected clean pages with updates'),
     EvictStat('eviction_consider_prefetch', 'pages considered for eviction that were brought in by pre-fetch', 'no_clear,no_scale'),
     EvictStat('eviction_enqueued_page', 'number of calls to enqueue a page'),
     EvictStat('eviction_fail', 'pages selected for eviction unable to be evicted'),

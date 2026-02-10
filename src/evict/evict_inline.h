@@ -101,10 +101,12 @@ __evict_destination_bucket(WT_SESSION_IMPL *session, WT_EVICT_BUCKETSET *buckets
     /*
      * If this is a page we won't need, it goes into a distinct bucketset. In that bucketset
      * all pages have the same read generation, so we place into a randomly selected bucket.
+     * Also, read generations only make sense for clean pages. For dirty content, we want to
+     * clean ASAP regardless of read generations.
      */
     if (read_gen == WT_READGEN_WONT_NEED || read_gen == WT_READGEN_EVICT_SOON
-        || bucketset->level == WT_EVICT_LEVEL_UPDATES_LEAF
-        || bucketset->level == WT_EVICT_LEVEL_UPDATES_INTERNAL) {
+        || (bucketset->level != WT_EVICT_LEVEL_CLEAN_LEAF &&
+            bucketset->level != WT_EVICT_LEVEL_CLEAN_INTERNAL)) {
         return (uint64_t)__wt_random(&session->rnd) % num_buckets;
     }
 
