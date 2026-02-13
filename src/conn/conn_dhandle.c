@@ -607,7 +607,7 @@ __wt_conn_dhandle_open(WT_SESSION_IMPL *session, const char *cfg[], uint32_t fla
     WT_ASSERT(session, F_ISSET(dhandle, WT_DHANDLE_EXCLUSIVE) && !LF_ISSET(WT_DHANDLE_LOCK_ONLY));
 
     WT_ASSERT(session, !F_ISSET_ATOMIC_32(S2C(session), WT_CONN_CLOSING_NO_MORE_OPENS));
-
+    uint64_t time = 0;
     /* Turn off eviction. */
     if (WT_DHANDLE_BTREE(dhandle))
         WT_RET(__wt_evict_file_exclusive_on(session));
@@ -627,7 +627,7 @@ __wt_conn_dhandle_open(WT_SESSION_IMPL *session, const char *cfg[], uint32_t fla
 
     /* Discard any previous configuration, set up the new configuration. */
     __conn_dhandle_config_clear(session);
-    WT_ERR(__conn_dhandle_config_set(session));
+    WT_ERR(__conn_dhandle_config_set(session)); // According to RDTSC only this function cost us 300 us
     WT_ERR(__conn_dhandle_config_parse_ts(session));
 
     switch (__wt_atomic_load_enum_relaxed(&dhandle->type)) {
@@ -644,7 +644,12 @@ __wt_conn_dhandle_open(WT_SESSION_IMPL *session, const char *cfg[], uint32_t fla
         if (dhandle->stat_array == NULL)
             WT_ERR(__wt_stat_dsrc_init(session, dhandle));
 
-        WT_ERR(__wt_btree_open(session, cfg));
+        uint64_t t_top = __wt_clock(session);
+        WT_FULL_BARRIER();
+        WT_ERR(__wt_btree_open(session, cfg)); // takes 1000 us
+        WT_FULL_BARRIER();
+        time = WT_CLOCKDIFF_US(__wt_clock(session), t_top);
+        fprintf(stderr, " === === === __wt_conn_dhandle_open spent %" PRIu64 "us\n", time);
         break;
     case WT_DHANDLE_TYPE_LAYERED:
         WT_ERR(__wt_schema_open_layered(session));

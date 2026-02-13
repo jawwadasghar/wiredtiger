@@ -123,7 +123,7 @@ __create_file_block_manager(WT_SESSION_IMPL *session, const char *uri, const cha
  *     Create a new 'file:' object.
  */
 static int
-__create_file(WT_SESSION_IMPL *session, const char *uri, bool exclusive, const char *config)
+__create_file(WT_SESSION_IMPL *session, const char *uri, bool exclusive, const char *config, uint64_t *times)
 {
     WT_CONFIG_ITEM cval;
     WT_DECL_ITEM(buf);
@@ -135,6 +135,8 @@ __create_file(WT_SESSION_IMPL *session, const char *uri, bool exclusive, const c
     char *fileconf, *filemeta;
     uint32_t allocsize, fileid;
     bool against_stable, exists, import, import_repair, is_metadata, is_shared;
+
+    uint64_t t_top = __wt_clock(session);
 
     fileconf = filemeta = NULL;
     filestripped = NULL;
@@ -163,6 +165,8 @@ __create_file(WT_SESSION_IMPL *session, const char *uri, bool exclusive, const c
         goto err;
     }
 
+    times[0] = WT_CLOCKDIFF_US(__wt_clock(session), t_top);
+
     exists = false;
     /*
      * At this moment the uri doesn't exist in the metadata. In scenarios like, the database folder
@@ -180,6 +184,7 @@ __create_file(WT_SESSION_IMPL *session, const char *uri, bool exclusive, const c
     WT_ERR(__wt_config_gets(session, filecfg, "allocation_size", &cval));
     allocsize = (uint32_t)cval.val;
 
+    times[1] = WT_CLOCKDIFF_US(__wt_clock(session), t_top);
     /*
      * If we are importing an existing object rather than creating a new one, there are two possible
      * scenarios. Either (1) the file configuration string from the source database metadata is
@@ -254,9 +259,12 @@ __create_file(WT_SESSION_IMPL *session, const char *uri, bool exclusive, const c
                   uri);
             }
         }
+        times[2] = WT_CLOCKDIFF_US(__wt_clock(session), t_top);
     } else
         /* Create the file. */
         WT_ERR(__create_file_block_manager(session, uri, filename, allocsize, filecfg));
+
+    times[3] = WT_CLOCKDIFF_US(__wt_clock(session), t_top);
 
     /*
      * If creating an ordinary file, update the file ID and current version numbers and strip
@@ -276,6 +284,9 @@ __create_file(WT_SESSION_IMPL *session, const char *uri, bool exclusive, const c
                 ;
             *p = val->data;
             WT_ERR(__wt_config_collapse(session, filecfg, &fileconf));
+
+            WT_FULL_BARRIER();
+            times[4] = WT_CLOCKDIFF_US(__wt_clock(session), t_top);
         } else {
             /* Try to recreate the associated metadata from the imported data source. */
             WT_ERR(__wt_import_repair(session, uri, &fileconf));
@@ -307,7 +318,10 @@ __create_file(WT_SESSION_IMPL *session, const char *uri, bool exclusive, const c
      *
      * Turn off bulk-load for imported files.
      */
-    WT_ERR(__wt_session_get_dhandle(session, uri, NULL, NULL, WT_DHANDLE_EXCLUSIVE));
+    times[5] = WT_CLOCKDIFF_US(__wt_clock(session), t_top);
+    WT_FULL_BARRIER();
+
+    WT_ERR(__wt_session_get_dhandle_internal(session, uri, NULL, NULL, WT_DHANDLE_EXCLUSIVE, &times[6]));
 
     if (session->import_list == NULL && import)
         __wt_btree_disable_bulk(session);
@@ -317,6 +331,9 @@ __create_file(WT_SESSION_IMPL *session, const char *uri, bool exclusive, const c
     else
         WT_ERR(__wt_session_release_dhandle(session));
 
+    WT_FULL_BARRIER();
+    times[7] = WT_CLOCKDIFF_US(__wt_clock(session), t_top);
+
 err:
     F_CLR(session, WT_SESSION_QUIET_CORRUPT_FILE);
     __wt_scr_free(session, &buf);
@@ -324,6 +341,9 @@ err:
     __wt_free(session, fileconf);
     __wt_free(session, filemeta);
     __wt_free(session, filestripped);
+
+    WT_FULL_BARRIER();
+    times[7] = WT_CLOCKDIFF_US(__wt_clock(session), t_top);
     return (ret);
 }
 
@@ -1550,22 +1570,35 @@ __schema_create(WT_SESSION_IMPL *session, const char *uri, const char *config)
     size_t i;
     char *export_file;
     bool clear_import_flag, exclusive, import;
+    uint64_t time = 0, time1 = 0, time2 = 0, time3 = 0, time4 = 0, time5 = 0, time6 = 0, time7 = 0;
+    uint64_t t_cleanup_start = 0, t_cleanup_end = 0;
+
+    uint64_t file_times[10];
+    for (i = 0; i < 10; ++i) file_times[i] = 0;
+
+    uint64_t t_top = __wt_clock(session);
 
     WT_CLEAR(import_list);
     export_file = NULL;
     clear_import_flag = false;
 
+    time1 = WT_CLOCKDIFF_US(__wt_clock(session), t_top);
     exclusive = __wt_config_getones(session, config, "exclusive", &cval) == 0 && cval.val != 0;
     import = session->import_list != NULL ||
       (__wt_config_getones(session, config, "import.enabled", &cval) == 0 && cval.val != 0);
 
+    time2 = WT_CLOCKDIFF_US(__wt_clock(session), t_top);
     WT_RET(__schema_create_config_check(session, uri, config, import));
 
     /*
      * We track create operations: if we fail in the middle of creating a complex object, we want to
      * back it all out.
      */
+
+    time3 = WT_CLOCKDIFF_US(__wt_clock(session), t_top);
     WT_RET(__wt_meta_track_on(session));
+
+    time4 = WT_CLOCKDIFF_US(__wt_clock(session), t_top);
     if (import) {
         if (!F_ISSET(session, WT_SESSION_IMPORT)) {
             F_SET(session, WT_SESSION_IMPORT);
@@ -1590,11 +1623,12 @@ __schema_create(WT_SESSION_IMPL *session, const char *uri, const char *config)
             session->import_list = &import_list;
         }
     }
+    time5 = WT_CLOCKDIFF_US(__wt_clock(session), t_top);
 
     if (WT_PREFIX_MATCH(uri, "colgroup:"))
         ret = __create_colgroup(session, uri, exclusive, config);
     else if (WT_PREFIX_MATCH(uri, "file:"))
-        ret = __create_file(session, uri, exclusive, config);
+        ret = __create_file(session, uri, exclusive, config, file_times);
     else if (WT_PREFIX_MATCH(uri, "index:"))
         ret = __create_index(session, uri, exclusive, config);
     else if (WT_PREFIX_MATCH(uri, "layered:"))
@@ -1613,7 +1647,10 @@ __schema_create(WT_SESSION_IMPL *session, const char *uri, const char *config)
     else
         ret = __wt_bad_object_type(session, uri);
 
+    time6 = WT_CLOCKDIFF_US(__wt_clock(session), t_top);
+
 err:
+    t_cleanup_start = __wt_clock(session);
     WT_DHANDLE_CLEAR(session);
     if (clear_import_flag)
         F_CLR(session, WT_SESSION_IMPORT);
@@ -1627,9 +1664,21 @@ err:
         __wt_free(session, import_list.entries[i].uri);
         __wt_free(session, import_list.entries[i].config);
     }
+    t_cleanup_end = WT_CLOCKDIFF_US(__wt_clock(session), t_cleanup_start);
+    time7 = WT_CLOCKDIFF_US(__wt_clock(session), t_top);
 
     __wt_free(session, import_list.entries);
     __wt_free(session, export_file);
+
+    time = WT_CLOCKDIFF_US(__wt_clock(session), t_top);
+    fprintf(stderr, "__schema_create for %s spent %" PRIu64 "us\n", uri, time);
+    fprintf(stderr, " --- time1 = %" PRIu64 "us, time2 = %" PRIu64 "us, time3 = %" PRIu64 "us\n", time1, time2, time3);
+    fprintf(stderr, " --- time4 = %" PRIu64 "us, time5 = %" PRIu64 "us, time6 = %" PRIu64 "us\n", time4, time5, time6);
+    fprintf(stderr, " --- time7 = %" PRIu64 "us\n", time7);
+    fprintf(stderr, " --- cleanup time = %" PRIu64 "us\n", t_cleanup_end);
+    fprintf(stderr, " --- --- file time[0] = %" PRIu64 "us, time[1] = %" PRIu64 "us, time[2] = %" PRIu64 "us\n", file_times[0], file_times[1], file_times[2]);
+    fprintf(stderr, " --- --- file time[3] = %" PRIu64 "us, time[4] = %" PRIu64 "us, time[5] = %" PRIu64 "us\n", file_times[3], file_times[4], file_times[5]);
+    fprintf(stderr, " --- --- file time[6] = %" PRIu64 "us, time[7] = %" PRIu64 "us, time[8] = %" PRIu64 "us\n", file_times[6], file_times[7], file_times[8]);
 
     return (ret);
 }

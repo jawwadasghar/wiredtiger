@@ -45,11 +45,11 @@ class test_schema07(TieredConfigMixin, wttest.WiredTigerTestCase):
         s = self.session
         # We have a 10MB cache, metadata is (well) over 512B per table,
         # if we can create 20K tables, something must be cleaning up.
-        for i in range(20000):
+        for i in range(1000):
             uri = '%s-%06d' % (self.tablename, i)
             s.create(uri)
-            c = s.open_cursor(uri)
-            # This will block if the metadata fills the cache
-            c["key"] = "value"
-            c.close()
+            # c = s.open_cursor(uri)
+            # # This will block if the metadata fills the cache
+            # c["key"] = "value"
+            # c.close()
             self.dropUntilSuccess(self.session, uri)

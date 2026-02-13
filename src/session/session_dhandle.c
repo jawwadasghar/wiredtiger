@@ -923,7 +923,18 @@ __session_get_dhandle(WT_SESSION_IMPL *session, const char *uri, const char *che
  */
 int
 __wt_session_get_dhandle(WT_SESSION_IMPL *session, const char *uri, const char *checkpoint,
-  const char *cfg[], uint32_t flags)
+  const char *cfg[], uint32_t flags) {
+    return (__wt_session_get_dhandle_internal(session, uri, checkpoint, cfg, flags, NULL));
+}
+
+/*
+ * __wt_session_get_dhandle --
+ *     Get a data handle for the given name, set session->dhandle. Optionally if we opened a
+ *     checkpoint return its checkpoint order number.
+ */
+int
+__wt_session_get_dhandle_internal(WT_SESSION_IMPL *session, const char *uri, const char *checkpoint,
+  const char *cfg[], uint32_t flags, int* time)
 {
     WT_DATA_HANDLE *dhandle;
     WT_DECL_RET;
@@ -983,7 +994,13 @@ __wt_session_get_dhandle(WT_SESSION_IMPL *session, const char *uri, const char *
             return (ret);
         }
 
-        if ((ret = __wt_conn_dhandle_open(session, cfg, flags)) == 0 &&
+        uint64_t t_top = __wt_clock(session);
+        ret = __wt_conn_dhandle_open(session, cfg, flags);
+        if (time != NULL) {
+            *time += WT_CLOCKDIFF_US(__wt_clock(session), t_top);
+        }
+
+        if ((ret) == 0 &&
           LF_ISSET(WT_DHANDLE_EXCLUSIVE))
             break;
 

@@ -180,7 +180,7 @@ __wt_btree_open(WT_SESSION_IMPL *session, const char *op_cfg[])
     checkpoint = NULL;
     has_ckpt = false;
     WT_CLEAR(lr_fh_meta);
-
+    uint64_t time = 0;
     /*
      * This may be a re-open, clean up the btree structure. Clear the fields that don't persist
      * across a re-open. Clear all flags other than the operation flags (which are set by the
@@ -275,8 +275,12 @@ __wt_btree_open(WT_SESSION_IMPL *session, const char *op_cfg[])
          * checkpoint (the file is being created), or the load call returns no root page (the
          * checkpoint is for an empty file).
          */
+        uint64_t t_top = __wt_clock(session);
+        WT_FULL_BARRIER();
         WT_ERR(bm->checkpoint_load(bm, session, ckpt.raw.data, ckpt.raw.size, root_addr,
           &root_addr_size, F_ISSET(btree, WT_BTREE_READONLY)));
+        WT_FULL_BARRIER();
+        time = WT_CLOCKDIFF_US(__wt_clock(session), t_top);
         if (creation || root_addr_size == 0)
             WT_ERR(__btree_tree_open_empty(session, creation));
         else {
@@ -324,6 +328,9 @@ err:
 
     __wt_scr_free(session, &name_buf);
     __wt_scr_free(session, &tmp);
+
+    fprintf(stderr, " === === === __wt_btree_open spent %" PRIu64 "us\n", time);
+
     return (ret);
 }
 

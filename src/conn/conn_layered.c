@@ -1026,6 +1026,7 @@ __disagg_apply_checkpoint_meta(
     WT_DECL_ITEM(old_uri_buf);
     WT_DECL_RET;
     uint32_t existing_tables, new_tables, new_ingest;
+    uint64_t t_preamble, t_top, t_cumulative_key_stuff, t_cumulative_existing, t_cumulative_new;
     char *layered_ingest_uri, *cfg_ret;
     const char *cfg[3], *checkpoint_name, *checkpoint_name_new, *current_value, *metadata_key,
       *metadata_value;
@@ -1035,6 +1036,7 @@ __disagg_apply_checkpoint_meta(
     checkpoint_name_new = NULL;
     layered_ingest_uri = cfg_ret = NULL;
     existing_tables = new_tables = new_ingest = 0;
+    t_preamble = __wt_clock(session);
 
     WT_ASSERT_SPINLOCK_OWNED(session, &S2C(session)->schema_lock);
 
@@ -1057,14 +1059,22 @@ __disagg_apply_checkpoint_meta(
     WT_ERR(__wt_scr_alloc(session, 0, &metadata_cfg));
     WT_ERR(__wt_scr_alloc(session, 0, &old_uri_buf));
 
+    t_preamble = WT_CLOCKDIFF_MS(__wt_clock(session), t_preamble);
+    t_cumulative_key_stuff = 0;
+    t_cumulative_existing = 0;
+    t_cumulative_new = 0;
+
     while ((ret = cursor->next(cursor)) == 0) {
+        t_top = __wt_clock(session);
         WT_ERR(cursor->get_key(cursor, &metadata_key));
         WT_ERR(cursor->get_value(cursor, &metadata_value));
 
         md_cursor->set_key(md_cursor, metadata_key);
         WT_ERR_NOTFOUND_OK(md_cursor->search(md_cursor), true);
+        t_cumulative_key_stuff += WT_CLOCKDIFF_MS(__wt_clock(session), t_top);
 
         if (ret == 0 && WT_PREFIX_MATCH(metadata_key, "file:")) {
+            t_top = __wt_clock(session);
             /* Existing table: Just apply the new metadata. */
             WT_ERR(__wt_config_getones(session, metadata_value, "checkpoint", &cval));
             WT_ERR(__wt_buf_fmt(session, metadata_cfg, "checkpoint=%.*s", (int)cval.len, cval.str));
@@ -1138,7 +1148,9 @@ __disagg_apply_checkpoint_meta(
             __wt_free(session, cfg_ret);
             __wt_free(session, checkpoint_name);
             __wt_free(session, checkpoint_name_new);
+            t_cumulative_existing += WT_CLOCKDIFF_MS(__wt_clock(session), t_top);
         } else if (ret == WT_NOTFOUND) {
+            t_top = __wt_clock(session);
             /* New table: Insert new metadata. */
             /* FIXME-WT-14730: verify that there is no btree ID conflict. */
 
@@ -1174,14 +1186,21 @@ __disagg_apply_checkpoint_meta(
             __wt_verbose_debug2(session, WT_VERB_DISAGGREGATED_STORAGE,
               "Inserted new key to the local metadata \"%s\": \"%s\"", metadata_key,
               metadata_value);
+            t_cumulative_new += WT_CLOCKDIFF_MS(__wt_clock(session), t_top);
         }
     }
     WT_ERR_NOTFOUND_OK(ret, false);
 
-    __wt_verbose_debug1(session, WT_VERB_DISAGGREGATED_STORAGE,
+    // __wt_verbose_debug1(session, WT_VERB_DISAGGREGATED_STORAGE,
+    fprintf(stderr,
       "Checkpoint pickup processed %" PRIu32 " existing tables, %" PRIu32 " new tables, %" PRIu32
-      " new ingest tables",
+      " new ingest table\n",
       existing_tables, new_tables, new_ingest);
+
+    fprintf(stderr, "__disagg_apply_checkpoint_meta: spent %" PRIu64 "ms on preamble\n", t_preamble);
+    fprintf(stderr, "__disagg_apply_checkpoint_meta: spent %" PRIu64 "ms on cursor stuff\n", t_cumulative_key_stuff);
+    fprintf(stderr, "__disagg_apply_checkpoint_meta: spent %" PRIu64 "ms on existing tables\n", t_cumulative_existing);
+    fprintf(stderr, "__disagg_apply_checkpoint_meta: spent %" PRIu64 "ms on new tables\n", t_cumulative_new);
 
 err:
     __wt_free(session, cfg_ret);
