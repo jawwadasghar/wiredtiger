@@ -427,15 +427,9 @@ __evict_update_work(WT_SESSION_IMPL *session)
 
     if (__wti_evict_exceeded_updates_trigger(session, NULL)) {
         LF_SET(WT_EVICT_CACHE_UPDATES | WT_EVICT_CACHE_UPDATES_HARD);
-        //      printf("updates_trigger = %d, bytes_updates = %" PRIu64 ", bytes_trigger = %" PRIu64 "\n",
-        //       (int)updates_trigger, __wt_cache_bytes_updates(S2C(session)->cache),
-        //       (uint64_t)((S2C(session)->cache_size + 1) * updates_trigger)/100);
     }
     else if (__wti_evict_exceeded_updates_target(session)) {
         LF_SET(WT_EVICT_CACHE_UPDATES);
-//        printf("updates_target = %d, bytes_updates = %" PRIu64 ", bytes_target = %" PRIu64 "\n",
-//               (int)updates_target, __wt_cache_bytes_updates(S2C(session)->cache),
-//               (uint64_t)((S2C(session)->cache_size + 1) * updates_target)/100);
     }
 
     /*
@@ -747,10 +741,11 @@ done:
 
 /*
  * __evict_server --
- *     Work to do for a thread elected to act as a server. In addition to evicting page
+ *     Work to do for a thread elected to act as a server. In addition to evicting pages
  *     this thread is responsible for tuning the number of workers and incrementing the
  *     global read generation.
  */
+#define EVICT_WORK_THRESHOLD 20
 static int
 __evict_server(WT_SESSION_IMPL *session, bool *did_work)
 {
@@ -783,9 +778,9 @@ __evict_server(WT_SESSION_IMPL *session, bool *did_work)
 
         __evict_tune_workers(session);
 
-//        printf("Evicted pages prev = %d, evicted pages = %d\n", (int)evict->read_gen, (int)evict->evicted_pages);
-        /* Increment the shared read generation if eviction is chasing newer pages. */
-        if ((evicted_pages_new = __wt_atomic_loadv64(&evict->evicted_pages)) - evicted_pages_prev > 20) {
+        /* Increment the shared read generation only if we are actually evicting pages */
+        if ((evicted_pages_new =
+             __wt_atomic_loadv64(&evict->evicted_pages)) - evicted_pages_prev > EVICT_WORK_THRESHOLD) {
             __wt_atomic_add64(&evict->read_gen, 1);
             evicted_pages_prev = evicted_pages_new;
             WT_STAT_CONN_SET(session, eviction_server_readgen, evict->read_gen);
@@ -849,9 +844,7 @@ __evict_server(WT_SESSION_IMPL *session, bool *did_work)
                  * Back off if we aren't making progress.
                  */
                 WT_STAT_CONN_INCR(session, eviction_slept);
-//                printf("Eviction server about to pause after doing work \n");
                 __wt_cond_wait(session, evict->evict_server_cond, WT_THOUSAND, NULL);
-                //              printf("Eviction server waking \n"); 
                 continue;
             }
             WT_STAT_CONN_INCR(session, eviction_slow);
