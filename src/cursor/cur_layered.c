@@ -1523,6 +1523,8 @@ err:
     API_END_RET(session, ret);
 }
 
+
+// TODO: Remove `bool reserve` argument
 /*
  * __clayered_put --
  *     Put an entry into the desired tree.
@@ -1833,6 +1835,30 @@ err:
 }
 
 /*
+ * __clayered_reserve_int --
+ *     TODO: Update the comment
+ */
+static int
+__clayered_reserve_int(WT_SESSION_IMPL *session, WT_CURSOR_LAYERED *clayered, WT_ITEM *key) {
+    WT_DECL_RET;
+
+    bool leader = S2C(session)->layered_table_manager.leader;
+    WT_CURSOR *reserve_cursor = leader ? clayered->stable_cursor : clayered->ingest_cursor;
+
+    CURSOR_UPDATE_API_CALL_BTREE(reserve_cursor, session, ret, reserve);
+    WT_RET(__clayered_reset_cursors(clayered, true));
+
+    reserve_cursor->set_key(reserve_cursor, key);
+
+    // TODO:ADD COMMENT ABOUT PASSING !leader for overwrite.
+    ret = __wt_btcur_reserve((WT_CURSOR_BTREE *)reserve_cursor, !leader);
+    CURSOR_UPDATE_API_END_STAT(session, ret, cursor_reserve);
+
+err:
+    return (ret);
+}
+
+/*
  * __clayered_reserve --
  *     WT_CURSOR->reserve method for the layered cursor type.
  */
@@ -1856,14 +1882,15 @@ __clayered_reserve(WT_CURSOR *cursor)
 
     /* WT_CURSOR.reserve is update-without-overwrite and a special value. */
     F_CLR(cursor, WT_CURSTD_OVERWRITE);
-    WT_ERR(__clayered_enter(clayered, false, S2C(session)->layered_table_manager.leader, false));
+    WT_ERR(__clayered_enter(clayered, false, true, false));
     WT_ERR(__clayered_lookup(session, clayered, &value));
     /*
      * Copy the key out, since the insert resets non-primary chunk cursors which our lookup may have
      * landed on.
      */
     WT_ERR(__cursor_needkey(cursor));
-    ret = __clayered_put(session, clayered, &cursor->key, NULL, true, true);
+    // ret = __clayered_put(session, clayered, &cursor->key, NULL, true, true);
+    ret = __clayered_reserve_int(session, clayered, &cursor->key);
 
 err:
     if (overwrite)
