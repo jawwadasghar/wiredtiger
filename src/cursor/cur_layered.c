@@ -16,6 +16,28 @@ static int __clayered_search_near(WT_CURSOR *, int *);
 static int __clayered_adjust_state(WT_CURSOR_LAYERED *, bool, bool *);
 
 /*
+ * Calling certain top level APIs allows for internal repositioning of cursors to facilitate
+ * eviction of hot pages. These macros facilitate tracking when that is OK.
+ */
+#define LAYERED_CURSOR_REPOSITION_ENTER(c, s)                 \
+    do {                                                      \
+        CURSOR_REPOSITION_ENTER(&(c)->iface, (s));            \
+        if ((c)->ingest_cursor != NULL)                       \
+            CURSOR_REPOSITION_ENTER((c)->ingest_cursor, (s)); \
+        if ((c)->stable_cursor != NULL)                       \
+            CURSOR_REPOSITION_ENTER((c)->stable_cursor, (s)); \
+    } while (0)
+
+#define LAYERED_CURSOR_REPOSITION_END(c, s)                 \
+    do {                                                    \
+        CURSOR_REPOSITION_END(&(c)->iface, (s));            \
+        if ((c)->ingest_cursor != NULL)                     \
+            CURSOR_REPOSITION_END((c)->ingest_cursor, (s)); \
+        if ((c)->stable_cursor != NULL)                     \
+            CURSOR_REPOSITION_END((c)->stable_cursor, (s)); \
+    } while (0)
+
+/*
  * __clayered_deleted --
  *     Check whether the current value is a tombstone in the layered cursor.
  */
@@ -317,6 +339,8 @@ retry:
 
         if (F_ISSET(c, WT_CURSTD_DEBUG_RESET_EVICT))
             F_SET(clayered->stable_cursor, WT_CURSTD_DEBUG_RESET_EVICT);
+        if (F_ISSET(c, WT_CURSTD_EVICT_REPOSITION))
+            F_SET(clayered->stable_cursor, WT_CURSTD_EVICT_REPOSITION);
     }
 
 err:
@@ -459,6 +483,7 @@ __clayered_adjust_state(WT_CURSOR_LAYERED *clayered, bool iteration, bool *state
          * To reopen the ingest table, all we need to do here is close it. It will be reopened when
          * needed. There's never a situation where we need to save its position.
          */
+        F_CLR(clayered->ingest_cursor, WT_CURSTD_EVICT_REPOSITION);
         WT_RET(clayered->ingest_cursor->close(clayered->ingest_cursor));
         if (clayered->current_cursor == clayered->ingest_cursor)
             clayered->current_cursor = NULL;
@@ -495,7 +520,8 @@ __clayered_adjust_state(WT_CURSOR_LAYERED *clayered, bool iteration, bool *state
             clayered->current_cursor = new_stable;
         }
 
-        /* Close the old cursor. */
+        /* Close the old cursor. The new stable cursor has already inherited the flag from iface. */
+        F_CLR(old_stable, WT_CURSTD_EVICT_REPOSITION);
         WT_RET(old_stable->close(old_stable));
 
         /* Add any bounds for the new cursor. */
@@ -566,6 +592,8 @@ __clayered_open_cursors(WT_SESSION_IMPL *session, WT_CURSOR_LAYERED *clayered)
 
         if (F_ISSET(c, WT_CURSTD_DEBUG_RESET_EVICT))
             F_SET(clayered->ingest_cursor, WT_CURSTD_DEBUG_RESET_EVICT);
+        if (F_ISSET(c, WT_CURSTD_EVICT_REPOSITION))
+            F_SET(clayered->ingest_cursor, WT_CURSTD_EVICT_REPOSITION);
     }
 
     if (F_ISSET(clayered, WT_CLAYERED_READ_STABLE) && clayered->stable_cursor == NULL) {
@@ -904,6 +932,7 @@ __clayered_next(WT_CURSOR *cursor)
     clayered = (WT_CURSOR_LAYERED *)cursor;
 
     CURSOR_API_CALL(cursor, session, ret, next, clayered->dhandle);
+    LAYERED_CURSOR_REPOSITION_ENTER(clayered, session);
     WT_ERR(__cursor_copy_release(cursor));
 
     WT_STAT_CONN_DSRC_INCR(session, layered_curs_next);
@@ -918,6 +947,7 @@ __clayered_next(WT_CURSOR *cursor)
     }
 
 err:
+    LAYERED_CURSOR_REPOSITION_END(clayered, session);
     API_END_RET(session, ret);
 }
 
@@ -935,6 +965,7 @@ __layered_prev(WT_CURSOR *cursor)
     clayered = (WT_CURSOR_LAYERED *)cursor;
 
     CURSOR_API_CALL(cursor, session, ret, prev, clayered->dhandle);
+    LAYERED_CURSOR_REPOSITION_ENTER(clayered, session);
     WT_ERR(__cursor_copy_release(cursor));
 
     WT_STAT_CONN_DSRC_INCR(session, layered_curs_prev);
@@ -949,6 +980,7 @@ __layered_prev(WT_CURSOR *cursor)
     }
 
 err:
+    LAYERED_CURSOR_REPOSITION_END(clayered, session);
     API_END_RET(session, ret);
 }
 
@@ -1335,6 +1367,7 @@ __clayered_search(WT_CURSOR *cursor)
     clayered = (WT_CURSOR_LAYERED *)cursor;
 
     CURSOR_API_CALL(cursor, session, ret, search, clayered->dhandle);
+    LAYERED_CURSOR_REPOSITION_ENTER(clayered, session);
     WT_ERR(__cursor_copy_release(cursor));
     WT_ERR(__cursor_needkey(cursor));
     __cursor_novalue(cursor);
@@ -1358,6 +1391,8 @@ err:
         F_CLR(cursor, WT_CURSTD_KEY_SET | WT_CURSTD_VALUE_SET);
         F_SET(cursor, WT_CURSTD_KEY_INT | WT_CURSTD_VALUE_INT);
     }
+
+    LAYERED_CURSOR_REPOSITION_END(clayered, session);
     API_END_RET(session, ret);
 }
 
@@ -1381,6 +1416,7 @@ __clayered_search_near(WT_CURSOR *cursor, int *exactp)
     stable_found = false;
 
     CURSOR_API_CALL(cursor, session, ret, search_near, clayered->dhandle);
+    LAYERED_CURSOR_REPOSITION_ENTER(clayered, session);
     WT_ERR(__cursor_copy_release(cursor));
     WT_ERR(__cursor_needkey(cursor));
     __cursor_novalue(cursor);
@@ -1520,6 +1556,7 @@ err:
         clayered->current_cursor = NULL;
     }
 
+    LAYERED_CURSOR_REPOSITION_END(clayered, session);
     API_END_RET(session, ret);
 }
 
