@@ -34,6 +34,9 @@ import wiredtiger, wttest
 from helper_disagg import disagg_test_class, gen_disagg_storages
 from wtscenario import make_scenarios
 
+# TODO: MAKE CODE LESS DUPLICATED !!!
+# TODO: ADD TEST VARIANTS FOR INSERT/UPDATE/MODIFY/SEARCH/SEARCH_NEAR/REMOVE/ETC...
+
 @disagg_test_class
 class test_layered79(wttest.WiredTigerTestCase):
     conn_config = 'statistics=(all),precise_checkpoint=true,' \
