@@ -1668,9 +1668,11 @@ __wt_btcur_reserve(WT_CURSOR_BTREE *cbt, bool overwrite)
 
     WT_STAT_CONN_DSRC_INCR(session, cursor_reserve);
 
-
-    // TODO: Change the comment
-    /* WT_CURSOR.reserve is update-without-overwrite and a special value. */
+    /*
+     * WT_CURSOR.reserve uses a special update type. Temporarily configure the overwrite flag (e.g.
+     * followers pass true so that reserve succeeds when the key exists only in the stable table and
+     * we update the ingest one).
+     */
     old_overwrite = F_ISSET(cursor, WT_CURSTD_OVERWRITE);
 
     F_CLR(cbt, WT_CURSTD_OVERWRITE);

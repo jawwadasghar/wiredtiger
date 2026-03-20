@@ -27,15 +27,52 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 
 # test_layered79.py
-#   Test that cursor.reserve() succeeds on a follower for a key that exists
+#   Test that cursor operations succeed (or fail) on a follower for keys that exist
 #   only in the stable table (i.e. written by the leader and checkpointed).
 
 import wiredtiger, wttest
 from helper_disagg import disagg_test_class, gen_disagg_storages
 from wtscenario import make_scenarios
 
-# TODO: MAKE CODE LESS DUPLICATED !!!
-# TODO: ADD TEST VARIANTS FOR INSERT/UPDATE/MODIFY/SEARCH/SEARCH_NEAR/REMOVE/ETC...
+# ---------------------------------------------------------------------------
+# Per-operation wrappers.  Each takes (cursor, key) and returns the raw
+# cursor API return value so the test body can assert on it uniformly.
+# ---------------------------------------------------------------------------
+
+def _op_reserve(cursor, key):
+    cursor.set_key(key)
+    return cursor.reserve()
+
+def _op_search(cursor, key):
+    cursor.set_key(key)
+    return cursor.search()
+
+def _op_search_near(cursor, key):
+    cursor.set_key(key)
+    return cursor.search_near()
+
+def _op_update(cursor, key):
+    cursor.set_key(key)
+    cursor.set_value('updated_value')
+    return cursor.update()
+
+def _op_remove(cursor, key):
+    cursor.set_key(key)
+    return cursor.remove()
+
+def _op_modify(cursor, key):
+    cursor.set_key(key)
+    # Replace the first character of 'value<key>' with 'X'.
+    return cursor.modify([wiredtiger.Modify('X', 0, 1)])
+
+_operations = [
+    ('reserve',     dict(do_op=_op_reserve)),
+    ('search',      dict(do_op=_op_search)),
+    ('search_near', dict(do_op=_op_search_near)),
+    ('update',      dict(do_op=_op_update)),
+    ('remove',      dict(do_op=_op_remove)),
+    ('modify',      dict(do_op=_op_modify)),
+]
 
 @disagg_test_class
 class test_layered79(wttest.WiredTigerTestCase):
@@ -45,7 +82,7 @@ class test_layered79(wttest.WiredTigerTestCase):
     uri = 'layered:test_layered79'
 
     disagg_storages = gen_disagg_storages('test_layered79', disagg_only=True)
-    scenarios = make_scenarios(disagg_storages)
+    scenarios = make_scenarios(disagg_storages, _operations)
 
     conn_follow = None
     session_follow = None
@@ -57,53 +94,14 @@ class test_layered79(wttest.WiredTigerTestCase):
             'disaggregated=(role="follower")')
         self.session_follow = self.conn_follow.open_session('')
 
-    def test_reserve_key_in_stable_table(self):
+    def create_table(self, nkeys=10):
         """
-        Create a table on the leader, insert entries, checkpoint, let the
-        follower pick up the checkpoint, then call reserve() on the follower
-        for a key that exists only in the stable table.
-        """
-        # Create table on the leader and insert a few keys under a transaction.
-        self.session.create(self.uri, 'key_format=i,value_format=S')
-
-        nkeys = 10
-        cursor = self.session.open_cursor(self.uri)
-        for i in range(1, nkeys + 1):
-            self.session.begin_transaction()
-            cursor[i] = 'value' + str(i)
-            self.session.commit_transaction('commit_timestamp=' + self.timestamp_str(i))
-        cursor.close()
-
-        # Advance the stable timestamp to make all inserts stable, then checkpoint.
-        self.conn.set_timestamp('stable_timestamp=' + self.timestamp_str(nkeys))
-        self.session.checkpoint()
-
-        # Open a follower and advance it to the latest checkpoint.
-        self.create_follower()
-        self.disagg_advance_checkpoint(self.conn_follow)
-
-        # On the follower, call reserve() for a key that exists only in the
-        # stable table (it was never written to the follower's ingest table).
-        reserve_key = 5
-        cursor_follow = self.session_follow.open_cursor(self.uri)
-        self.session_follow.begin_transaction()
-        cursor_follow.set_key(reserve_key)
-        # reserve() should succeed (return 0) because the key exists in the stable table.
-        self.assertEqual(cursor_follow.reserve(), 0)
-        # After a successful reserve(), the cursor should be positioned on the key
-        # and get_value() should return the previously written value.
-        self.assertEqual(cursor_follow.get_value(), 'value' + str(reserve_key))
-        self.session_follow.rollback_transaction()
-        cursor_follow.close()
-
-    def test_reserve_non_existent_key_on_follower(self):
-        """
-        Verify that reserve() returns WT_NOTFOUND for a key that does not
-        exist in either the stable or ingest table on the follower.
+        Create a table on the leader, insert nkeys keys (key=1..nkeys,
+        value='value<i>') under individual transactions, advance the stable
+        timestamp, and checkpoint
         """
         self.session.create(self.uri, 'key_format=i,value_format=S')
 
-        nkeys = 5
         cursor = self.session.open_cursor(self.uri)
         for i in range(1, nkeys + 1):
             self.session.begin_transaction()
@@ -114,13 +112,19 @@ class test_layered79(wttest.WiredTigerTestCase):
         self.conn.set_timestamp('stable_timestamp=' + self.timestamp_str(nkeys))
         self.session.checkpoint()
 
+    def test_follower_ops_on_stable_table(self):
+        """
+        Run self.do_op on the follower against self.key. Keys 1-10 exist only
+        in the stable table (never written to the ingest table).
+        """
+        self.create_table(nkeys=10)
+
         self.create_follower()
         self.disagg_advance_checkpoint(self.conn_follow)
-
-        # Key 99 was never inserted, so reserve() should fail with WT_NOTFOUND.
         cursor_follow = self.session_follow.open_cursor(self.uri)
+
+        key = 5
         self.session_follow.begin_transaction()
-        cursor_follow.set_key(99)
-        self.assertRaises(wiredtiger.WiredTigerError, lambda: cursor_follow.reserve())
+        self.assertEqual(self.do_op(cursor_follow, key), 0)
         self.session_follow.rollback_transaction()
         cursor_follow.close()
