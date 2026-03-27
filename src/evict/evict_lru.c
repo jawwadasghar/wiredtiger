@@ -1121,7 +1121,8 @@ __evict_get_ref(
     evict = conn->evict;
     i = 0;
     iter = total_iter = 0;
-    min_level = max_level = 0;
+    max_level = 0;
+    min_level = WT_EVICT_CACHE_CLEAN; /* Start above the won't need bucket. That bucket is for forced eviction. */
     previous_state = 0;
     early_skipped_tree = skipped = skip_locked = 0;
 #if PRINT_CACHE_STATE
@@ -2014,7 +2015,7 @@ __wt_evict_check_if_blocking(WT_SESSION_IMPL *session)
     WT_DECL_RET;
     WT_CONNECTION_IMPL *conn = S2C(session);
     WT_EVICT *evict = conn->evict;
-#define APP_HELP 1
+#define APP_HELP 0
 #if APP_HELP
     double pct_full;
 #endif
