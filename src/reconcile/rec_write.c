@@ -353,6 +353,10 @@ __reconcile(WT_SESSION_IMPL *session, WT_REF *ref, WT_SALVAGE_COOKIE *salvage, u
 
         WT_STAT_CONN_DSRC_INCR(session, cache_eviction_blocked_no_progress);
         ret = __wt_set_return(session, EBUSY);
+
+        printf("page %p (%s) blocked eviction (session %d). Modified: %d, %p\n",
+               (void *)page, __wt_page_type_string(page->type), (int)session->id,
+               __wt_page_is_modified(page), (void*)page->modify);
     }
     addr = ref->addr;
 

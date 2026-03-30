@@ -1,7 +1,7 @@
 /*-
  * Copyright (c) 2014-present MongoDB, Inc.
  * Copyright (c) 2008-2014 WiredTiger, Inc.
- *	All rights reserved.
+ *  All rights reserved.
  *
  * See the file LICENSE for redistribution information.
  */
@@ -779,8 +779,10 @@ __rec_upd_select(WT_SESSION_IMPL *session, WTI_RECONCILE *r, WT_CELL_UNPACK_KV *
          * shared metadata file.
          */
         if ((WT_IS_METADATA(session->dhandle) || WT_IS_DISAGG_META(session->dhandle)) &&
-          session_txnid != WT_TXN_NONE && txnid == session_txnid)
+            session_txnid != WT_TXN_NONE && txnid == session_txnid) {
+            printf("2: EBUSY\n");
             return (__wt_set_return(session, EBUSY));
+        }
 
         /*
          * Track the first update in the chain that is not aborted or its rollback timestamp is not
@@ -822,6 +824,7 @@ __rec_upd_select(WT_SESSION_IMPL *session, WTI_RECONCILE *r, WT_CELL_UNPACK_KV *
             if (upd_select->upd != NULL) {
                 WT_ASSERT_ALWAYS(session, WT_IS_METADATA(session->dhandle),
                   "Uncommitted update followed by committed update in a non-metadata file");
+                printf("3: ebusy\n");
                 return (__wt_set_return(session, EBUSY));
             }
 
@@ -1031,6 +1034,7 @@ __rec_upd_select(WT_SESSION_IMPL *session, WTI_RECONCILE *r, WT_CELL_UNPACK_KV *
     if (max_ts > r->max_ts)
         r->max_ts = max_ts;
 
+    printf("rec_upd_select: success, upd_select->upd %p\n", upd_select->upd);
     return (0);
 }
 
@@ -1056,6 +1060,8 @@ __rec_upd_select_inmem(WT_SESSION_IMPL *session, WTI_RECONCILE *r, WT_CELL_UNPAC
     max_txn = WT_TXN_NONE;
     /* Assert that we can only call reconciliation for in memory btree in eviction */
     WT_ASSERT(session, WT_REC_EVICT);
+
+    printf("rec_update_inmem\n");
 
     session_txnid = __wt_atomic_load_uint64_v_relaxed(&WT_SESSION_TXN_SHARED(session)->id);
     first_pruned_update = NULL;
@@ -1447,8 +1453,12 @@ __wti_rec_upd_select(WT_SESSION_IMPL *session, WTI_RECONCILE *r, WT_INSERT *ins,
     else {
         /* Note: ins is never null for columns. */
         WT_ASSERT(session, rip != NULL && page->type == WT_PAGE_ROW_LEAF);
-        if ((first_upd = WT_ROW_UPDATE(page, rip)) == NULL)
+        if ((first_upd = WT_ROW_UPDATE(page, rip)) == NULL) {
+            printf("page %p (%s) at 1 (session %d). Modified: %d, %p. Has no updates\n",
+                   (void *)page, __wt_page_type_string(page->type), (int)session->id,
+                   __wt_page_is_modified(page), (void*)page->modify);
             return (0);
+        }
     }
 
     if (F_ISSET(S2BT(session), WT_BTREE_IN_MEMORY)) {

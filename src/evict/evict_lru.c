@@ -625,11 +625,8 @@ __wt_evict_file_exclusive_off(WT_SESSION_IMPL *session)
         int32_t v;
 
         v = __wt_atomic_sub_int32(&btree->evict_data.evict_disabled, 1);
-        if(v < 0){
-            printf("evict_disabled  = %d\n", btree->evict_data.evict_disabled);
-            fflush (stdout);
+        if(v < 0)
             WT_ASSERT(session, v >= 0);
-        }
     }
 #else
     (void)__wt_atomic_sub_int32(&btree->evict_data.evict_disabled, 1);
@@ -1105,13 +1102,13 @@ __evict_get_ref(
     WT_PAGE *page;
     WT_REF *ref;
     WT_REF_STATE previous_state;
-    uint32_t i, iter, j, min_level, max_level, num_buckets, total_iter;
+    uint32_t i, iter, j, min_level, max_level, num_buckets, rand, cumulative,
+        total_items, total_iter;
     int early_skipped_tree, skipped, skip_locked;
     bool skip_page;
 
-#if PRINT_CACHE_STATE
+#if 0//PRINT_CACHE_STATE
     int empty_buckets;
-    uint64_t total_items;
     WT_CACHE *cache;
 #endif
 
@@ -1119,16 +1116,13 @@ __evict_get_ref(
     bucketset = NULL;
     conn = S2C(session);
     evict = conn->evict;
-    i = 0;
-    iter = total_iter = 0;
-    max_level = 0;
-    min_level = WT_EVICT_CACHE_CLEAN; /* Start above the won't need bucket. That bucket is for forced eviction. */
+    cumulative = iter = max_level = previous_state = total_items = total_iter = 0;
     previous_state = 0;
     early_skipped_tree = skipped = skip_locked = 0;
-#if PRINT_CACHE_STATE
+#if 0//PRINT_CACHE_STATE
     cache = conn->cache;
-    total_items = 0;
 #endif
+
     /*
      * It is polite to initialize output variables, but it isn't safe for callers to use the
      * previous state if we don't return a locked ref.
@@ -1138,6 +1132,9 @@ __evict_get_ref(
 
     if (!F_ISSET(evict, WT_EVICT_CACHE_ANY))
         goto done;
+
+    /* Start above the won't need bucket. That bucket is for forced eviction. */
+    min_level = WT_EVICT_CACHE_CLEAN;
 
     if (!F_ISSET(evict, WT_EVICT_CACHE_CLEAN) && !F_ISSET(evict, WT_EVICT_CACHE_DIRTY)) {
         if (F_ISSET(evict, WT_EVICT_CACHE_UPDATES))
@@ -1164,7 +1161,34 @@ __evict_get_ref(
         printf("URGENT EVICTION!!!!!!!!!!!!\n");
     }
 
-//    min_level =  WT_EVICT_LEVEL_DIRTY_LEAF;
+    /* Sum items across all eligible bucketsets. */
+    total_items = 0;
+    for (i = min_level; i <= max_level; i++)
+        total_items +=
+            __wt_atomic_load_uint64_relaxed(&evict->evict_bucketset[i].bucketset_num_items);
+
+    /* If no items in any eligible bucket, nothing to evict. */
+    if (total_items == 0)
+        goto done;
+
+    rand = (uint32_t)__wt_random(&session->rnd_random) % total_items;
+
+    for (i = min_level; i <= max_level; i++) {
+        cumulative += evict->evict_bucketset[i].bucketset_num_items;
+        if (rand < cumulative) {
+            min_level = i;
+            break;
+        }
+    }
+
+#if 0
+    printf("Total items: %d, min_level = %d\n", (int)total_items, (int)min_level);
+    for (i = 0; i < WT_EVICT_LEVELS; i++) {
+        printf("level [%d][%s]: %" PRIu64 " items.\n", (int)i, __evict_level_to_string(i),
+               evict->evict_bucketset[i].bucketset_num_items);
+    }
+#endif
+
     for (i = min_level; i <= max_level; i++) {
         if (!F_ISSET(conn->evict, WT_EVICT_CACHE_ANY))
             break;
@@ -1289,7 +1313,7 @@ done:
         (void)__wt_atomic_sub_int32(&page->evict_data.dhandle->session_inuse, 1);
 
         WT_STAT_CONN_INCR(session, eviction_get_ref_success);
-#if PRINT_CACHE_STATE
+#if 0//PRINT_CACHE_STATE
         if (total_iter % 4 == 0) {
             printf("Server read_gen is %" PRIu64
                    ". Evict flags: %d. Found ref in %d iterations at level %s. Min_level %d, "
@@ -1626,18 +1650,8 @@ __wt_evict_remove(WT_SESSION_IMPL *session, WT_REF *ref, bool destroying)
 
     if (WT_REF_GET_STATE(ref) == WT_REF_LOCKED && WT_REF_OWNER(ref) == session) {
         /* The ref is already locked by us */
-#if EVICT_DEBUG_PRINT
-        printf("ref for page %p %s (type %d) already locked in __wt_evict_remove by session %d\n",
-          (void *)ref->page, __wt_page_type_string(ref->page->type), ref->page->type, session->id);
-        fflush(stdout);
-#endif
         must_unlock_ref = false;
     } else {
-#if EVICT_DEBUG_PRINT
-        printf("Session %d about to LOCK ref for page %p %s (type %d) in __wt_evict_remove!\n",
-          session->id, (void *)page, __wt_page_type_string(page->type), page->type);
-        fflush(stdout);
-#endif
         WT_REF_LOCK(session, ref, &previous_state);
         must_unlock_ref = true;
         fflush(stdout);
