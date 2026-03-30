@@ -1144,18 +1144,7 @@ __evict_get_ref(
             WT_STAT_CONN_INCR(session, eviction_target_strategy_updates_only);
     }
 
-    /*
-     * We iterate over bucket sets in eviction priority order from highest to lowest is:
-     * 1. Clean leaf pages.
-     * 2. Clean internal pages.
-     * 3. Dirty leaf pages.
-     * 4. Dirty internal pages.
-     *
-     * The iteration order of the bucket sets can be changed if a different priority is desired.
-     *
-     * In each bucketset we iterate over the buckets starting with the smallest, because smaller
-     * buckets will have pages with smaller read generations.
-     */
+
     if (F_ISSET(evict, WT_EVICT_CACHE_CLEAN))
         max_level = WT_EVICT_LEVEL_CLEAN_LEAF;
     if (F_ISSET(evict, WT_EVICT_CACHE_DIRTY))
@@ -1175,6 +1164,7 @@ __evict_get_ref(
         printf("URGENT EVICTION!!!!!!!!!!!!\n");
     }
 
+//    min_level =  WT_EVICT_LEVEL_DIRTY_LEAF;
     for (i = min_level; i <= max_level; i++) {
         if (!F_ISSET(conn->evict, WT_EVICT_CACHE_ANY))
             break;
@@ -1298,8 +1288,9 @@ done:
         __wt_atomic_sub_uint64(&bucketset->bucketset_num_items, 1);
         (void)__wt_atomic_sub_int32(&page->evict_data.dhandle->session_inuse, 1);
 
+        WT_STAT_CONN_INCR(session, eviction_get_ref_success);
 #if PRINT_CACHE_STATE
-        if (total_iter > 1000) {
+        if (total_iter % 4 == 0) {
             printf("Server read_gen is %" PRIu64
                    ". Evict flags: %d. Found ref in %d iterations at level %s. Min_level %d, "
                    "max_level = %d\n",
@@ -1325,10 +1316,10 @@ done:
               __wt_cache_pages_inuse(cache), __wt_cache_bytes_image(cache));
         }
 #endif
-    } else {
+    } else
         WT_STAT_CONN_INCR(session, eviction_get_ref_empty);
-    }
 
+    WT_STAT_CONN_INCRV(session, eviction_get_ref_iterations, total_iter);
     ret = (*refp == NULL ? WT_NOTFOUND : 0);
     return (ret);
 }
